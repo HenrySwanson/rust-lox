@@ -1,10 +1,11 @@
-use crate::common::token::SpannedToken;
 use crate::lexer::Lexer;
+use crate::parser::Parser;
 use io::Write;
 use std::{env, fs, io, process};
 
 mod common;
 mod lexer;
+mod parser;
 
 type RunResult = Result<(), String>;
 
@@ -48,14 +49,16 @@ fn run_file(filename: &str) {
 
 fn run(source: &str) -> RunResult {
     let lexer = Lexer::new(source);
-    let (tokens, errors): (Vec<_>, Vec<_>) = lexer.iter().partition(|r| r.is_ok());
-    let tokens: Vec<SpannedToken> = tokens.into_iter().map(Result::unwrap).collect();
-    let _errors: Vec<String> = errors.into_iter().map(Result::unwrap_err).collect();
+    let tokens: Result<Vec<_>, _> = lexer.iter().collect();
 
-    // For now, just print the tokens
-    for t in tokens.iter() {
-        println!("{:?}", t.token);
-    }
+    let mut parser = Parser::new(tokens?.into_iter());
+
+    // For now, just print the expression
+    let expr = match parser.parse_expression() {
+        Ok(expr) => expr,
+        Err(e) => return Err(format!("{:?}", e)),
+    };
+    println!("{}", expr.lispy_string());
 
     Ok(())
 }

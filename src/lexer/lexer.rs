@@ -189,7 +189,7 @@ impl<'src> Lexer<'src> {
         Ok(token)
     }
 
-	// I feel like it's more idiomatic to have lexer.iter()?
+    // I feel like it's more idiomatic to have lexer.iter()?
     pub fn iter(self) -> LexerIterator<'src> {
         LexerIterator { lexer: self }
     }

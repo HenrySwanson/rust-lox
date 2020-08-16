@@ -62,4 +62,12 @@ impl SpannedToken {
     pub fn new(token: Token, span: Span) -> Self {
         SpannedToken { token, span }
     }
+
+    pub fn split(self) -> (Token, Span) {
+        return (self.token, self.span);
+    }
+
+    pub fn split_ref(&self) -> (&Token, &Span) {
+        return (&self.token, &self.span);
+    }
 }
