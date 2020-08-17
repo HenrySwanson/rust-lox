@@ -1,11 +1,13 @@
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::treewalk::Interpreter;
 use io::Write;
 use std::{env, fs, io, process};
 
 mod common;
 mod lexer;
 mod parser;
+mod treewalk;
 
 type RunResult = Result<(), String>;
 
@@ -23,6 +25,8 @@ fn main() {
 }
 
 fn run_prompt() {
+    let interpreter = Interpreter::new();
+
     loop {
         let mut input = String::new();
 
@@ -32,7 +36,7 @@ fn run_prompt() {
             .read_line(&mut input)
             .expect("Failed to read line");
 
-        match run(&input) {
+        match run(&interpreter, &input) {
             Ok(_) => {}
             Err(e) => report_error(&e),
         }
@@ -41,24 +45,33 @@ fn run_prompt() {
 
 fn run_file(filename: &str) {
     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
-    match run(&contents) {
+    let interpreter = Interpreter::new();
+
+    match run(&interpreter, &contents) {
         Ok(_) => {}
         Err(e) => report_error(&e),
     }
 }
 
-fn run(source: &str) -> RunResult {
+fn run(interpreter: &Interpreter, source: &str) -> RunResult {
     let lexer = Lexer::new(source);
     let tokens: Result<Vec<_>, _> = lexer.iter().collect();
 
     let mut parser = Parser::new(tokens?.into_iter());
 
-    // For now, just print the expression
+    // Print the expression
     let expr = match parser.parse_expression() {
         Ok(expr) => expr,
         Err(e) => return Err(format!("{:?}", e)),
     };
-    println!("{}", expr.lispy_string());
+
+    // println!("{}", expr.lispy_string());
+
+    // Now we also evaluate it
+    match interpreter.eval_expression(&expr) {
+        Ok(output) => println!("{:?}", output),
+        Err(e) => return Err(format!("{:?}", e)),
+    }
 
     Ok(())
 }
