@@ -25,7 +25,7 @@ fn main() {
 }
 
 fn run_prompt() {
-    let interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new();
 
     loop {
         let mut input = String::new();
@@ -36,7 +36,7 @@ fn run_prompt() {
             .read_line(&mut input)
             .expect("Failed to read line");
 
-        match run(&interpreter, &input) {
+        match run(&mut interpreter, &input) {
             Ok(_) => {}
             Err(e) => report_error(&e),
         }
@@ -45,35 +45,38 @@ fn run_prompt() {
 
 fn run_file(filename: &str) {
     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
-    let interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new();
 
-    match run(&interpreter, &contents) {
+    match run(&mut interpreter, &contents) {
         Ok(_) => {}
         Err(e) => report_error(&e),
     }
 }
 
-fn run(interpreter: &Interpreter, source: &str) -> RunResult {
+fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
+    // Lex the string
     let lexer = Lexer::new(source);
     let tokens: Result<Vec<_>, _> = lexer.iter().collect();
 
-    let mut parser = Parser::new(tokens?.into_iter());
+    let tokens = match tokens {
+        Ok(tokens) => tokens,
+        Err(e) => return Err(e),
+    };
 
-    // Print the expression
-    let expr = match parser.parse_expression() {
-        Ok(expr) => expr,
+    // Parse the tokens
+    let parser = Parser::new(tokens.into_iter());
+    let statements: Result<Vec<_>, _> = parser.parse_all().into_iter().collect();
+
+    let statements = match statements {
+        Ok(statements) => statements,
         Err(e) => return Err(format!("{:?}", e)),
     };
 
-    // println!("{}", expr.lispy_string());
-
-    // Now we also evaluate it
-    match interpreter.eval_expression(&expr) {
-        Ok(output) => println!("{:?}", output),
-        Err(e) => return Err(format!("{:?}", e)),
+    // And evaluate the statements
+    match interpreter.eval_statements(statements) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("{:?}", e)),
     }
-
-    Ok(())
 }
 
 fn report_error(err_msg: &str) {

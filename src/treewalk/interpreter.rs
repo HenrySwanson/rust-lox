@@ -1,23 +1,45 @@
+use super::environment::Environment;
+use super::errs::{Error, RuntimeResult};
 use super::object::Object;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, PrefixOperator};
 
-pub struct Interpreter {}
-
-#[derive(Debug)]
-pub enum Error {
-    IllegalInfixOperation(InfixOperator, Object, Object),
-    IllegalPrefixOperation(PrefixOperator, Object),
+pub struct Interpreter {
+    env: Environment,
 }
-
-pub type RuntimeResult<T> = Result<T, Error>;
 
 impl Interpreter {
     pub fn new() -> Self {
-        Interpreter {}
+        Interpreter {
+            env: Environment::new(),
+        }
     }
 
-    pub fn eval_expression(&self, expr: &ast::Expr) -> RuntimeResult<Object> {
+    pub fn eval_statements(&mut self, stmts: Vec<ast::Stmt>) -> RuntimeResult<()> {
+        for stmt in stmts.iter() {
+            self.eval_statement(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn eval_statement(&mut self, stmt: &ast::Stmt) -> RuntimeResult<()> {
+        match stmt {
+            ast::Stmt::Expression(expr) => {
+                self.eval_expression(expr)?;
+            }
+            ast::Stmt::Print(expr) => {
+                println!("[out] {:?}", self.eval_expression(expr)?);
+            }
+            ast::Stmt::VariableDecl(name, expr) => {
+                let value = self.eval_expression(expr)?;
+                self.env.define(name.clone(), value);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn eval_expression(&mut self, expr: &ast::Expr) -> RuntimeResult<Object> {
         match expr {
             ast::Expr::NumberLiteral(n) => Ok(Object::Number(*n as i64)),
             ast::Expr::BooleanLiteral(b) => Ok(Object::Boolean(*b)),
@@ -25,11 +47,17 @@ impl Interpreter {
             ast::Expr::NilLiteral => Ok(Object::Nil),
             ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
             ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
+            ast::Expr::Variable(name) => self.env.get(name),
+            ast::Expr::Assignment(name, expr) => {
+                let value = self.eval_expression(expr)?;
+                self.env.set(name.clone(), value.clone())?;
+                Ok(value)
+            }
         }
     }
 
     fn eval_infix_operator(
-        &self,
+        &mut self,
         op: InfixOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
@@ -59,7 +87,11 @@ impl Interpreter {
         }
     }
 
-    fn eval_prefix_operator(&self, op: PrefixOperator, expr: &ast::Expr) -> RuntimeResult<Object> {
+    fn eval_prefix_operator(
+        &mut self,
+        op: PrefixOperator,
+        expr: &ast::Expr,
+    ) -> RuntimeResult<Object> {
         let value = self.eval_expression(expr)?;
 
         match op {

@@ -16,6 +16,7 @@ pub enum Error {
     WentBeyondEof,
     ExpectedTokenAt(Token, CodePosition, Token),
     ExpectedExprAt(CodePosition, Token),
+    ExpectedIdentifier(CodePosition),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -84,8 +85,57 @@ where
 
     // ---- parsing methods ----
 
-    pub fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
-        // We use pratt parsing to deal with this
+    pub fn parse_all(mut self) -> Vec<ParseResult<ast::Stmt>> {
+        let mut stmts = vec![];
+
+        // TODO
+        while !self.check(Token::EndOfFile).expect("???") {
+            let stmt = self.parse_declaration();
+            // TODO: synchronize here
+            stmts.push(stmt);
+        }
+
+        return stmts;
+    }
+
+    fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
+        let (token, _) = self.peek_token()?.split_ref();
+        match token {
+            Token::Var => {
+                self.bump()?;
+                let name = self.parse_identifier()?;
+                let expr = if self.try_eat(Token::Equals)? {
+                    self.parse_expression()?
+                } else {
+                    ast::Expr::NilLiteral
+                };
+                self.eat(Token::Semicolon)?;
+
+                Ok(ast::Stmt::VariableDecl(name, expr))
+            }
+            _ => self.parse_statement(),
+        }
+    }
+
+    fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let (token, _) = self.peek_token()?.split_ref();
+        match token {
+            Token::Print => {
+                self.bump()?;
+                let expr = self.parse_expression()?;
+                self.eat(Token::Semicolon)?;
+                Ok(ast::Stmt::Print(expr))
+            }
+            _ => {
+                let expr = self.parse_expression()?;
+                self.eat(Token::Semicolon)?;
+                Ok(ast::Stmt::Expression(expr))
+            }
+        }
+    }
+
+    fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
+        // We use pratt parsing to deal with expressions
         self.pratt_parse(Precedence::Lowest)
     }
 
@@ -99,6 +149,7 @@ where
             Token::False => ast::Expr::BooleanLiteral(false),
             Token::String(s) => ast::Expr::StringLiteral(s),
             Token::Nil => ast::Expr::NilLiteral,
+            Token::Identifier(name) => ast::Expr::Variable(name),
             // Parentheses
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
@@ -118,10 +169,12 @@ where
         // Now we start consuming infix operators
         loop {
             // Is it an infix operator?
-            let token = &self.peek_token()?.token;
+            let (token, span) = self.peek_token()?.split_ref();
+            let span = span.to_owned(); // so we can drop the mutable borrow above
+
             if let Some(op) = InfixOperator::try_from_token(token) {
-                // Since all operators are left-associative, we should treat equal precedence
-                // as insufficient.
+                // Since arithmetic and equality operators are left-associative,
+                // we should treat equal precedence as insufficient.
                 if op.precedence() <= min_precedence {
                     break;
                 }
@@ -133,10 +186,39 @@ where
                 continue;
             }
 
+            // Is it assignment?
+            if let Token::Equals = token {
+                // Assignment is right-associative, so we recurse on equal precedence
+                if Precedence::Assignment < min_precedence {
+                    break;
+                }
+
+                // Grab the operator
+                self.bump()?;
+
+                // The LHS must be an identifier
+                let name = match lhs {
+                    ast::Expr::Variable(name) => name,
+                    _ => return Err(Error::ExpectedIdentifier(span.start_pos)),
+                };
+
+                let rhs = self.pratt_parse(Precedence::Assignment)?;
+                lhs = ast::Expr::Assignment(name, Box::new(rhs));
+                continue;
+            }
+
             break;
         }
 
         Ok(lhs)
+    }
+
+    fn parse_identifier(&mut self) -> ParseResult<String> {
+        let (token, span) = self.take_token()?.split();
+        match token {
+            Token::Identifier(name) => Ok(name.clone()),
+            _ => Err(Error::ExpectedIdentifier(span.start_pos)),
+        }
     }
 }
 

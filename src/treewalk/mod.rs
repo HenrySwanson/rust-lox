@@ -1,3 +1,5 @@
+mod environment;
+mod errs;
 mod interpreter;
 mod object;
 
