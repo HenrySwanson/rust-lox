@@ -126,12 +126,25 @@ where
                 self.eat(Token::Semicolon)?;
                 Ok(ast::Stmt::Print(expr))
             }
+            Token::LeftBrace => self.parse_block_statement(),
             _ => {
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
                 Ok(ast::Stmt::Expression(expr))
             }
         }
+    }
+
+    fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let mut stmts = vec![];
+
+        self.eat(Token::LeftBrace)?;
+        // TODO also look for EOF
+        while !self.try_eat(Token::RightBrace)? {
+            stmts.push(self.parse_declaration()?);
+        }
+
+        Ok(ast::Stmt::Block(stmts))
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {

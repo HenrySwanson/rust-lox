@@ -34,8 +34,28 @@ impl Interpreter {
                 let value = self.eval_expression(expr)?;
                 self.env.define(name.clone(), value);
             }
+            ast::Stmt::Block(stmts) => self.eval_block(stmts)?,
         }
 
+        Ok(())
+    }
+
+    fn eval_block(&mut self, stmts: &Vec<ast::Stmt>) -> RuntimeResult<()> {
+        // Grab old scope and make new one
+        let prev = self.env.clone();
+        self.env = Environment::with_enclosing(&prev);
+
+        for stmt in stmts.iter() {
+            match self.eval_statement(stmt) {
+                Ok(_) => {}
+                Err(e) => {
+                    self.env = prev;
+                    return Err(e);
+                }
+            }
+        }
+
+        self.env = prev;
         Ok(())
     }
 

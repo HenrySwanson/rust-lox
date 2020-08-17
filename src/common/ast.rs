@@ -17,6 +17,7 @@ pub enum Stmt {
     Expression(Expr),
     Print(Expr),
     VariableDecl(String, Expr),
+    Block(Vec<Stmt>),
 }
 
 impl Expr {
