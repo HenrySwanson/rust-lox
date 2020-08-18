@@ -190,7 +190,6 @@ where
         };
         self.eat(Token::Semicolon)?;
 
-
         let increment = if self.check(Token::RightParen) {
             None
         } else {

@@ -6,6 +6,7 @@ pub enum Error {
     IllegalInfixOperation(InfixOperator, Object, Object),
     IllegalPrefixOperation(PrefixOperator, Object),
     UndefinedVariable(String),
+    DivideByZero,
 }
 
 pub type RuntimeResult<T> = Result<T, Error>;

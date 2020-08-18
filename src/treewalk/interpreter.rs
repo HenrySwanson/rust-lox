@@ -122,7 +122,18 @@ impl Interpreter {
             },
             InfixOperator::Subtract => numerical_binop(op, lhs, rhs, |a, b| Object::Number(a - b)),
             InfixOperator::Multiply => numerical_binop(op, lhs, rhs, |a, b| Object::Number(a * b)),
-            InfixOperator::Divide => numerical_binop(op, lhs, rhs, |a, b| Object::Number(a / b)),
+            // Division is special to avoid div by zero panic
+            InfixOperator::Divide => match (lhs, rhs) {
+                (Object::Number(a), Object::Number(b)) => {
+                    if b != 0 {
+                        Ok(Object::Number(a / b))
+                    } else {
+                        Err(Error::DivideByZero)
+                    }
+                }
+                (lhs, rhs) => Err(Error::IllegalInfixOperation(op, lhs, rhs)),
+
+            },
             InfixOperator::EqualTo => Ok(Object::Boolean(lhs == rhs)),
             InfixOperator::NotEqualTo => Ok(Object::Boolean(lhs != rhs)),
             InfixOperator::GreaterThan => {
