@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::operator::{InfixOperator, Precedence, PrefixOperator};
+use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
 use crate::common::span::CodePosition;
 use crate::common::token::{SpannedToken, Token};
 use std::iter::Peekable;
@@ -125,6 +125,9 @@ where
                 self.eat(Token::Semicolon)?;
                 Ok(ast::Stmt::Print(expr))
             }
+            Token::If => self.parse_if_else_statement(),
+            Token::While => self.parse_while_statement(),
+            Token::For => self.parse_for_statement(),
             Token::LeftBrace => self.parse_block_statement(),
             _ => {
                 let expr = self.parse_expression()?;
@@ -132,6 +135,82 @@ where
                 Ok(ast::Stmt::Expression(expr))
             }
         }
+    }
+
+    fn parse_if_else_statement(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::If)?;
+        self.eat(Token::LeftParen)?;
+        let condition = self.parse_expression()?;
+        self.eat(Token::RightParen)?;
+
+        let body = self.parse_statement()?;
+        let else_body = if self.try_eat(Token::Else) {
+            Some(self.parse_statement()?)
+        } else {
+            None
+        };
+
+        Ok(ast::Stmt::IfElse(
+            condition,
+            Box::new(body),
+            Box::new(else_body),
+        ))
+    }
+
+    fn parse_while_statement(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::While)?;
+        self.eat(Token::LeftParen)?;
+        let condition = self.parse_expression()?;
+        self.eat(Token::RightParen)?;
+
+        let body = self.parse_statement()?;
+
+        Ok(ast::Stmt::While(condition, Box::new(body)))
+    }
+
+    fn parse_for_statement(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::For)?;
+        self.eat(Token::LeftParen)?;
+
+        // Figure out the three parts of the loop; each is optional
+        let initializer = if self.try_eat(Token::Semicolon) {
+            None
+        } else if self.check(Token::Var) {
+            Some(self.parse_declaration()?)
+        } else {
+            let expr = self.parse_expression()?;
+            self.eat(Token::Semicolon)?;
+            Some(ast::Stmt::Expression(expr))
+        };
+
+        let condition = if self.check(Token::Semicolon) {
+            ast::Expr::BooleanLiteral(true)
+        } else {
+            self.parse_expression()?
+        };
+        self.eat(Token::Semicolon)?;
+
+
+        let increment = if self.check(Token::RightParen) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+        self.eat(Token::RightParen)?;
+
+        // Now we read the body, and modify it so that it has the semantics of
+        // the for-loop.
+        let mut body = self.parse_statement()?;
+
+        if let Some(increment) = increment {
+            body = ast::Stmt::Block(vec![body, ast::Stmt::Expression(increment)]);
+        }
+        body = ast::Stmt::While(condition, Box::new(body));
+        if let Some(initializer) = initializer {
+            body = ast::Stmt::Block(vec![initializer, body]);
+        }
+
+        Ok(body)
     }
 
     fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
@@ -194,6 +273,19 @@ where
                 self.bump();
                 let rhs = self.pratt_parse(op.precedence())?;
                 lhs = ast::Expr::Infix(op, Box::new(lhs), Box::new(rhs));
+                continue;
+            }
+
+            // Is it a logic operator?
+            if let Some(op) = LogicalOperator::try_from_token(&token) {
+                // Logic operators are left-associative
+                if op.precedence() <= min_precedence {
+                    break;
+                }
+
+                self.bump();
+                let rhs = self.pratt_parse(op.precedence())?;
+                lhs = ast::Expr::Logical(op, Box::new(lhs), Box::new(rhs));
                 continue;
             }
 

@@ -2,7 +2,7 @@ use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::object::Object;
 use crate::common::ast;
-use crate::common::operator::{InfixOperator, PrefixOperator};
+use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 pub struct Interpreter {
     env: Environment,
@@ -26,15 +26,43 @@ impl Interpreter {
         match stmt {
             ast::Stmt::Expression(expr) => {
                 self.eval_expression(expr)?;
+                Ok(())
             }
             ast::Stmt::Print(expr) => {
                 println!("[out] {:?}", self.eval_expression(expr)?);
+                Ok(())
             }
+            ast::Stmt::IfElse(cond, body, else_body) => self.eval_if_else(cond, body, else_body),
+            ast::Stmt::While(cond, body) => self.eval_while(cond, body),
             ast::Stmt::VariableDecl(name, expr) => {
                 let value = self.eval_expression(expr)?;
                 self.env.define(name.clone(), value);
+                Ok(())
             }
-            ast::Stmt::Block(stmts) => self.eval_block(stmts)?,
+            ast::Stmt::Block(stmts) => self.eval_block(stmts),
+        }
+    }
+
+    fn eval_if_else(
+        &mut self,
+        condition: &ast::Expr,
+        body: &ast::Stmt,
+        else_body: &Option<ast::Stmt>,
+    ) -> RuntimeResult<()> {
+        if self.eval_expression(condition)?.is_truthy() {
+            return self.eval_statement(body);
+        }
+
+        if let Some(else_body) = else_body {
+            return self.eval_statement(else_body);
+        }
+
+        Ok(())
+    }
+
+    fn eval_while(&mut self, condition: &ast::Expr, body: &ast::Stmt) -> RuntimeResult<()> {
+        while self.eval_expression(condition)?.is_truthy() {
+            self.eval_statement(body)?;
         }
 
         Ok(())
@@ -67,6 +95,7 @@ impl Interpreter {
             ast::Expr::NilLiteral => Ok(Object::Nil),
             ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
             ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
+            ast::Expr::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
             ast::Expr::Variable(name) => self.env.get(name),
             ast::Expr::Assignment(name, expr) => {
                 let value = self.eval_expression(expr)?;
@@ -120,6 +149,21 @@ impl Interpreter {
                 _ => Err(Error::IllegalPrefixOperation(op, value)),
             },
             PrefixOperator::LogicalNot => Ok(Object::Boolean(!value.is_truthy())),
+        }
+    }
+
+    fn eval_logical_operator(
+        &mut self,
+        op: LogicalOperator,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+    ) -> RuntimeResult<Object> {
+        // The short-circuiting means we can't yet evaluate the RHS.
+        let lhs = self.eval_expression(lhs)?;
+        match op {
+            LogicalOperator::And if !lhs.is_truthy() => Ok(lhs),
+            LogicalOperator::Or if lhs.is_truthy() => Ok(lhs),
+            _ => self.eval_expression(rhs),
         }
     }
 }

@@ -1,4 +1,4 @@
-use super::operator::{InfixOperator, PrefixOperator};
+use super::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
@@ -8,6 +8,7 @@ pub enum Expr {
     NilLiteral,
     Infix(InfixOperator, Box<Expr>, Box<Expr>),
     Prefix(PrefixOperator, Box<Expr>),
+    Logical(LogicalOperator, Box<Expr>, Box<Expr>),
     Variable(String),
     Assignment(String, Box<Expr>),
 }
@@ -18,6 +19,8 @@ pub enum Stmt {
     Print(Expr),
     VariableDecl(String, Expr),
     Block(Vec<Stmt>),
+    IfElse(Expr, Box<Stmt>, Box<Option<Stmt>>),
+    While(Expr, Box<Stmt>),
 }
 
 impl Expr {
@@ -36,6 +39,12 @@ impl Expr {
                 rhs.lispy_string()
             ),
             Expr::Prefix(op, expr) => format!("({} {})", op.symbol(), expr.lispy_string()),
+            Expr::Logical(op, lhs, rhs) => format!(
+                "({} {} {})",
+                op.symbol(),
+                lhs.lispy_string(),
+                rhs.lispy_string()
+            ),
             Expr::Variable(name) => name.clone(),
             Expr::Assignment(name, expr) => format!("(set {} {})", name, expr.lispy_string()),
         }

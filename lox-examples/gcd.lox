@@ -1,0 +1,16 @@
+var a = 2 * 3 * 5;
+var b = 3 * 3 * 5 * 7;
+
+while (b != 0) {
+	// We don't have mod, so use repeated subtraction
+	while (a >= b) {
+		a = a - b;
+	}
+
+	// Swap variables
+	var t = a;
+	a = b;
+	b = t;
+}
+
+print a;

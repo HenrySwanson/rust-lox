@@ -1,0 +1,13 @@
+var maxIdx = 20;
+var maxNum = 100;
+
+var a = 0;
+var b = 1;
+
+for (var i = 0; i < maxIdx and a < maxNum; i = i + 1) {
+	print a;
+
+	var t = a + b;
+	a = b;
+	b = t;
+}

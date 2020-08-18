@@ -5,6 +5,8 @@ pub enum Precedence {
     // weakest-binding
     Lowest,
     Assignment,
+    LogicalOr,
+    LogicalAnd,
     Equality,
     Comparison,
     Addition,
@@ -31,6 +33,13 @@ pub enum InfixOperator {
     GreaterEq,
     LessThan,
     LessEq,
+}
+
+// these are different because they short-circuit
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LogicalOperator {
+    And,
+    Or,
 }
 
 impl PrefixOperator {
@@ -99,6 +108,31 @@ impl InfixOperator {
             InfixOperator::GreaterEq => ">=",
             InfixOperator::LessThan => "<",
             InfixOperator::LessEq => "<=",
+        }
+    }
+}
+
+impl LogicalOperator {
+    pub fn try_from_token(token: &Token) -> Option<LogicalOperator> {
+        let op = match token {
+            Token::And => LogicalOperator::And,
+            Token::Or => LogicalOperator::Or,
+            _ => return None,
+        };
+        return Some(op);
+    }
+
+    pub fn precedence(&self) -> Precedence {
+        match self {
+            LogicalOperator::And => Precedence::LogicalAnd,
+            LogicalOperator::Or => Precedence::LogicalOr,
+        }
+    }
+
+    pub fn symbol(&self) -> &str {
+        match self {
+            LogicalOperator::And => "and",
+            LogicalOperator::Or => "or",
         }
     }
 }
