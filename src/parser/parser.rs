@@ -13,7 +13,6 @@ where
 
 #[derive(Debug)]
 pub enum Error {
-    WentBeyondEof,
     ExpectedTokenAt(Token, CodePosition, Token),
     ExpectedExprAt(CodePosition, Token),
     ExpectedIdentifier(CodePosition),
@@ -34,49 +33,50 @@ where
     // ---- Simple token-based operations ----
 
     /// Returns the current token
-    fn peek_token(&mut self) -> ParseResult<&SpannedToken> {
+    fn peek_token(&mut self) -> SpannedToken {
         match self.tokens.peek() {
-            Some(t) => Ok(&t),
-            None => Err(Error::WentBeyondEof),
+            Some(t) => t.clone(),
+            None => panic!("Went beyond EOF"),
         }
     }
 
     /// Returns the current token and advances the stream
-    fn take_token(&mut self) -> ParseResult<SpannedToken> {
+    fn take_token(&mut self) -> SpannedToken {
         match self.tokens.next() {
-            Some(t) => Ok(t),
-            None => Err(Error::WentBeyondEof),
+            Some(t) => t,
+            None => panic!("Went beyond EOF"),
         }
     }
 
     /// Advances the stream, erroring if we're at EOF
-    fn bump(&mut self) -> ParseResult<()> {
-        match self.take_token()?.token {
-            Token::EndOfFile => Err(Error::WentBeyondEof),
-            _ => Ok(()),
+    fn bump(&mut self) {
+        match self.take_token().token {
+            Token::EndOfFile => panic!("Bumped at EOF"),
+            _ => (),
         }
     }
 
     /// Checks whether or not the current token matches the given token
-    fn check(&mut self, t: Token) -> ParseResult<bool> {
-        return Ok(self.peek_token()?.token == t);
+    fn check(&mut self, t: Token) -> bool {
+        return self.peek_token().token == t;
     }
 
     /// Checks whether or not the current token matches the given token,
     /// and if so, consumes it, returning true.
-    fn try_eat(&mut self, t: Token) -> ParseResult<bool> {
-        if self.check(t)? {
-            self.bump()?;
-            return Ok(true);
+    fn try_eat(&mut self, t: Token) -> bool {
+        if self.check(t) {
+            self.bump();
+            return true;
         }
-        return Ok(false);
+        return false;
     }
 
-    /// Consumes a token, asserting that it equals the expected token
+    /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token) -> ParseResult<()> {
-        let (token, span) = self.take_token()?.split();
+        let (token, span) = self.peek_token().split();
 
         if token == expected {
+            self.bump();
             Ok(())
         } else {
             Err(Error::ExpectedTokenAt(expected, span.start_pos, token))
@@ -88,8 +88,7 @@ where
     pub fn parse_all(mut self) -> Vec<ParseResult<ast::Stmt>> {
         let mut stmts = vec![];
 
-        // TODO
-        while !self.check(Token::EndOfFile).expect("???") {
+        while !self.check(Token::EndOfFile) {
             let stmt = self.parse_declaration();
             // TODO: synchronize here
             stmts.push(stmt);
@@ -99,12 +98,12 @@ where
     }
 
     fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
-        let (token, _) = self.peek_token()?.split_ref();
+        let (token, _) = self.peek_token().split();
         match token {
             Token::Var => {
-                self.bump()?;
+                self.bump();
                 let name = self.parse_identifier()?;
-                let expr = if self.try_eat(Token::Equals)? {
+                let expr = if self.try_eat(Token::Equals) {
                     self.parse_expression()?
                 } else {
                     ast::Expr::NilLiteral
@@ -118,10 +117,10 @@ where
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let (token, _) = self.peek_token()?.split_ref();
+        let (token, _) = self.peek_token().split();
         match token {
             Token::Print => {
-                self.bump()?;
+                self.bump();
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
                 Ok(ast::Stmt::Print(expr))
@@ -139,8 +138,7 @@ where
         let mut stmts = vec![];
 
         self.eat(Token::LeftBrace)?;
-        // TODO also look for EOF
-        while !self.try_eat(Token::RightBrace)? {
+        while !self.try_eat(Token::RightBrace) {
             stmts.push(self.parse_declaration()?);
         }
 
@@ -154,7 +152,7 @@ where
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, taking care of prefix expressions
-        let (token, span) = self.take_token()?.split();
+        let (token, span) = self.take_token().split();
         let mut lhs = match token {
             // Literals
             Token::Number(n) => ast::Expr::NumberLiteral(n),
@@ -182,10 +180,10 @@ where
         // Now we start consuming infix operators
         loop {
             // Is it an infix operator?
-            let (token, span) = self.peek_token()?.split_ref();
+            let (token, span) = self.peek_token().split();
             let span = span.to_owned(); // so we can drop the mutable borrow above
 
-            if let Some(op) = InfixOperator::try_from_token(token) {
+            if let Some(op) = InfixOperator::try_from_token(&token) {
                 // Since arithmetic and equality operators are left-associative,
                 // we should treat equal precedence as insufficient.
                 if op.precedence() <= min_precedence {
@@ -193,7 +191,7 @@ where
                 }
 
                 // Grab the operator and rhs and fold them into the new lhs
-                self.bump()?;
+                self.bump();
                 let rhs = self.pratt_parse(op.precedence())?;
                 lhs = ast::Expr::Infix(op, Box::new(lhs), Box::new(rhs));
                 continue;
@@ -207,7 +205,7 @@ where
                 }
 
                 // Grab the operator
-                self.bump()?;
+                self.bump();
 
                 // The LHS must be an identifier
                 let name = match lhs {
@@ -227,7 +225,7 @@ where
     }
 
     fn parse_identifier(&mut self) -> ParseResult<String> {
-        let (token, span) = self.take_token()?.split();
+        let (token, span) = self.take_token().split();
         match token {
             Token::Identifier(name) => Ok(name.clone()),
             _ => Err(Error::ExpectedIdentifier(span.start_pos)),

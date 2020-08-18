@@ -56,18 +56,28 @@ fn run_file(filename: &str) {
 fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
     // Lex the string
     let lexer = Lexer::new(source);
-    let tokens: Result<Vec<_>, _> = lexer.iter().collect();
+    let tokens: Vec<_> = lexer.iter().collect();
 
-    let tokens = match tokens {
+    // Print the tokens
+    // for t in tokens.iter() {
+    //     println!("{:?}", t.token);
+    // }
+
+    let tokens: Vec<_> = match tokens.into_iter().collect() {
         Ok(tokens) => tokens,
         Err(e) => return Err(e),
     };
 
     // Parse the tokens
     let parser = Parser::new(tokens.into_iter());
-    let statements: Result<Vec<_>, _> = parser.parse_all().into_iter().collect();
+    let statements: Vec<_> = parser.parse_all();
 
-    let statements = match statements {
+    // Print the AST
+    // for s in statements.iter() {
+    //     println!("{:?}", s);
+    // }
+
+    let statements: Vec<_> = match statements.into_iter().collect() {
         Ok(statements) => statements,
         Err(e) => return Err(format!("{:?}", e)),
     };
