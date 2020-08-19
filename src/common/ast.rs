@@ -1,6 +1,6 @@
 use super::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     NumberLiteral(u32),
     BooleanLiteral(bool),
@@ -14,7 +14,7 @@ pub enum Expr {
     Call(Box<Expr>, Vec<Expr>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Stmt {
     Expression(Expr),
     Print(Expr),
@@ -22,6 +22,8 @@ pub enum Stmt {
     Block(Vec<Stmt>),
     IfElse(Expr, Box<Stmt>, Box<Option<Stmt>>),
     While(Expr, Box<Stmt>),
+    FunctionDecl(String, Vec<String>, Box<Stmt>),
+    Return(Expr),
 }
 
 impl Expr {

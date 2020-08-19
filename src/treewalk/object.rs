@@ -1,6 +1,9 @@
 use super::builtins::BuiltInFn;
 use super::errs::{Error, RuntimeResult};
+use super::function::LoxFunction;
 use super::interpreter::Interpreter;
+
+use crate::common::ast;
 
 use std::rc::Rc;
 
@@ -10,7 +13,9 @@ pub enum Object {
     Boolean(bool),
     String(String),
     Nil,
-    BuiltInFunction(Rc<BuiltInFn>), // Rc so that cloning doesn't need to copy the fn
+    // Rc so that cloning doesn't need to copy the fn
+    BuiltInFunction(Rc<BuiltInFn>),
+    LoxFunction(Rc<LoxFunction>),
 }
 
 impl Object {
@@ -29,6 +34,7 @@ impl Object {
     ) -> RuntimeResult<Object> {
         match self {
             Object::BuiltInFunction(builtin) => builtin.execute_call(args, interpreter),
+            Object::LoxFunction(func) => func.execute_call(args, interpreter),
             _ => Err(Error::NotACallable(self.clone())),
         }
     }

@@ -3,6 +3,7 @@ use crate::common::operator::{InfixOperator, PrefixOperator};
 
 #[derive(Debug)]
 pub enum Error {
+    Return(Object), // Not really an error! But it acts a lot like one...
     IllegalInfixOperation(InfixOperator, Object, Object),
     IllegalPrefixOperation(PrefixOperator, Object),
     UndefinedVariable(String),

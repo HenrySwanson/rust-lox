@@ -1,13 +1,17 @@
 use super::builtins::get_builtins;
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
+use super::function::LoxFunction;
 use super::object::Object;
+
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
+
 use std::rc::Rc;
 
 pub struct Interpreter {
-    env: Environment,
+    pub env: Environment,
+    pub globals: Environment,
 }
 
 impl Interpreter {
@@ -18,8 +22,14 @@ impl Interpreter {
             let obj = Object::BuiltInFunction(Rc::new(builtin));
             env.define(name, obj);
         }
+        let globals = env.clone();
 
-        Interpreter { env }
+        Interpreter { env, globals }
+    }
+
+    pub fn swap_environment(&mut self, mut env: Environment) -> Environment {
+        std::mem::swap(&mut self.env, &mut env);
+        env // which is now the old self.env
     }
 
     pub fn eval_statements(&mut self, stmts: Vec<ast::Stmt>) -> RuntimeResult<()> {
@@ -29,7 +39,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_statement(&mut self, stmt: &ast::Stmt) -> RuntimeResult<()> {
+    pub fn eval_statement(&mut self, stmt: &ast::Stmt) -> RuntimeResult<()> {
         match stmt {
             ast::Stmt::Expression(expr) => {
                 self.eval_expression(expr)?;
@@ -47,6 +57,16 @@ impl Interpreter {
                 Ok(())
             }
             ast::Stmt::Block(stmts) => self.eval_block(stmts),
+            ast::Stmt::FunctionDecl(name, params, body) => {
+                let func = LoxFunction::new(name.clone(), params.clone(), *body.clone());
+                self.env
+                    .define(name.clone(), Object::LoxFunction(Rc::new(func)));
+                Ok(())
+            }
+            ast::Stmt::Return(expr) => {
+                let value = self.eval_expression(expr)?;
+                Err(Error::Return(value))
+            }
         }
     }
 

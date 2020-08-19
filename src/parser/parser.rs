@@ -114,8 +114,18 @@ where
 
                 Ok(ast::Stmt::VariableDecl(name, expr))
             }
+            Token::Fun => self.parse_function_decl(),
             _ => self.parse_statement(),
         }
+    }
+
+    fn parse_function_decl(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::Fun)?;
+        let name = self.parse_identifier()?;
+        let params = self.parse_fn_params()?;
+        let body = self.parse_block_statement()?;
+
+        Ok(ast::Stmt::FunctionDecl(name, params, Box::new(body)))
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
@@ -130,6 +140,7 @@ where
             Token::If => self.parse_if_else_statement(),
             Token::While => self.parse_while_statement(),
             Token::For => self.parse_for_statement(),
+            Token::Return => self.parse_return_statement(),
             Token::LeftBrace => self.parse_block_statement(),
             _ => {
                 let expr = self.parse_expression()?;
@@ -212,6 +223,18 @@ where
         }
 
         Ok(body)
+    }
+
+    fn parse_return_statement(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::Return)?;
+        let expr = if !self.check(Token::Semicolon) {
+            self.parse_expression()?
+        } else {
+            ast::Expr::NilLiteral
+        };
+
+        self.eat(Token::Semicolon)?;
+        Ok(ast::Stmt::Return(expr))
     }
 
     fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
@@ -354,6 +377,32 @@ where
         while !self.try_eat(Token::RightParen) {
             self.eat(Token::Comma)?;
             args.push(self.parse_expression()?);
+        }
+
+        // lox has a maximum number of arguments it supports
+        if args.len() >= MAX_NUMBER_ARGS {
+            let span = self.peek_token().span;
+            return Err(Error::TooManyArgs(span.start_pos));
+        }
+
+        Ok(args)
+    }
+
+    fn parse_fn_params(&mut self) -> ParseResult<Vec<String>> {
+        self.eat(Token::LeftParen)?;
+        let mut args = vec![];
+
+        // Check for the zero-argument case
+        if self.try_eat(Token::RightParen) {
+            return Ok(args);
+        }
+
+        // There must be at least one argument
+        args.push(self.parse_identifier()?);
+
+        while !self.try_eat(Token::RightParen) {
+            self.eat(Token::Comma)?;
+            args.push(self.parse_identifier()?);
         }
 
         // lox has a maximum number of arguments it supports

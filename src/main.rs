@@ -30,6 +30,7 @@ fn run_prompt() {
     loop {
         let mut input = String::new();
 
+        // TODO maybe only interpret once i get two blank lines?
         print!("> ");
         io::stdout().flush().unwrap();
         io::stdin()
