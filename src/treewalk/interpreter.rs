@@ -1,8 +1,10 @@
+use super::builtins::get_builtins;
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::object::Object;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
+use std::rc::Rc;
 
 pub struct Interpreter {
     env: Environment,
@@ -10,9 +12,14 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Interpreter {
-            env: Environment::new(),
+        let mut env = Environment::new();
+        for builtin in get_builtins().into_iter() {
+            let name = builtin.name.clone();
+            let obj = Object::BuiltInFunction(Rc::new(builtin));
+            env.define(name, obj);
         }
+
+        Interpreter { env }
     }
 
     pub fn eval_statements(&mut self, stmts: Vec<ast::Stmt>) -> RuntimeResult<()> {
@@ -102,6 +109,7 @@ impl Interpreter {
                 self.env.set(name.clone(), value.clone())?;
                 Ok(value)
             }
+            ast::Expr::Call(callee, args) => self.eval_function_call(callee, args),
         }
     }
 
@@ -132,7 +140,6 @@ impl Interpreter {
                     }
                 }
                 (lhs, rhs) => Err(Error::IllegalInfixOperation(op, lhs, rhs)),
-
             },
             InfixOperator::EqualTo => Ok(Object::Boolean(lhs == rhs)),
             InfixOperator::NotEqualTo => Ok(Object::Boolean(lhs != rhs)),
@@ -176,6 +183,21 @@ impl Interpreter {
             LogicalOperator::Or if lhs.is_truthy() => Ok(lhs),
             _ => self.eval_expression(rhs),
         }
+    }
+
+    fn eval_function_call(
+        &mut self,
+        callee: &ast::Expr,
+        arg_exprs: &Vec<ast::Expr>,
+    ) -> RuntimeResult<Object> {
+        let callee = self.eval_expression(callee)?;
+
+        let mut args = Vec::with_capacity(arg_exprs.len());
+        for expr in arg_exprs.iter() {
+            args.push(self.eval_expression(expr)?);
+        }
+
+        callee.execute_call(args, self)
     }
 }
 

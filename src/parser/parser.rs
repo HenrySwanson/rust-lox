@@ -1,4 +1,5 @@
 use crate::common::ast;
+use crate::common::constants::MAX_NUMBER_ARGS;
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
 use crate::common::span::CodePosition;
 use crate::common::token::{SpannedToken, Token};
@@ -16,6 +17,7 @@ pub enum Error {
     ExpectedTokenAt(Token, CodePosition, Token),
     ExpectedExprAt(CodePosition, Token),
     ExpectedIdentifier(CodePosition),
+    TooManyArgs(CodePosition),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -309,6 +311,20 @@ where
                 continue;
             }
 
+            // Is it a function call?
+            if let Token::LeftParen = token {
+                // Calling is left-associative
+                if Precedence::Call < min_precedence {
+                    break;
+                }
+
+                // Don't parse the parentheses, it'll get consumed by this function
+                let arguments = self.parse_fn_args()?;
+
+                lhs = ast::Expr::Call(Box::new(lhs), arguments);
+                continue;
+            }
+
             break;
         }
 
@@ -321,6 +337,32 @@ where
             Token::Identifier(name) => Ok(name.clone()),
             _ => Err(Error::ExpectedIdentifier(span.start_pos)),
         }
+    }
+
+    fn parse_fn_args(&mut self) -> ParseResult<Vec<ast::Expr>> {
+        self.eat(Token::LeftParen)?;
+        let mut args = vec![];
+
+        // Check for the zero-argument case
+        if self.try_eat(Token::RightParen) {
+            return Ok(args);
+        }
+
+        // There must be at least one argument
+        args.push(self.parse_expression()?);
+
+        while !self.try_eat(Token::RightParen) {
+            self.eat(Token::Comma)?;
+            args.push(self.parse_expression()?);
+        }
+
+        // lox has a maximum number of arguments it supports
+        if args.len() >= MAX_NUMBER_ARGS {
+            let span = self.peek_token().span;
+            return Err(Error::TooManyArgs(span.start_pos));
+        }
+
+        Ok(args)
     }
 }
 

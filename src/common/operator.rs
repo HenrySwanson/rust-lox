@@ -12,6 +12,7 @@ pub enum Precedence {
     Addition,
     Multiplication,
     Unary,
+    Call,
     // tightest-binding
 }
 

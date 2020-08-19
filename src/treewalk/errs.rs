@@ -7,6 +7,8 @@ pub enum Error {
     IllegalPrefixOperation(PrefixOperator, Object),
     UndefinedVariable(String),
     DivideByZero,
+    WrongArity(usize, usize),
+    NotACallable(Object),
 }
 
 pub type RuntimeResult<T> = Result<T, Error>;

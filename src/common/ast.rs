@@ -11,6 +11,7 @@ pub enum Expr {
     Logical(LogicalOperator, Box<Expr>, Box<Expr>),
     Variable(String),
     Assignment(String, Box<Expr>),
+    Call(Box<Expr>, Vec<Expr>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +48,10 @@ impl Expr {
             ),
             Expr::Variable(name) => name.clone(),
             Expr::Assignment(name, expr) => format!("(set {} {})", name, expr.lispy_string()),
+            Expr::Call(callee, args) => {
+                let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();
+                format!("(call {} {})", callee.lispy_string(), exprs.join(" "))
+            }
         }
     }
 }
