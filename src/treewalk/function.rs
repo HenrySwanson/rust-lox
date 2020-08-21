@@ -6,21 +6,27 @@ use super::object::Object;
 use crate::common::ast;
 
 use std::fmt;
+use std::rc::Rc;
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct LoxFunction {
+struct LoxFunctionData {
     name: String,
     params: Vec<String>,
     body: ast::Stmt,
+    closure: Environment,
 }
 
-impl LoxFunction {
-    pub fn new(name: String, params: Vec<String>, body: ast::Stmt) -> Self {
-        LoxFunction { name, params, body }
-    }
+#[derive(Clone)]
+pub struct LoxFunctionPtr(Rc<LoxFunctionData>);
 
-    pub fn name(&self) -> String {
-        self.name.clone()
+impl LoxFunctionPtr {
+    pub fn new(name: String, params: Vec<String>, body: ast::Stmt, closure: Environment) -> Self {
+        let data = LoxFunctionData {
+            name,
+            params,
+            body,
+            closure,
+        };
+        LoxFunctionPtr(Rc::new(data))
     }
 
     // TODO this is gross! can you pass around the environment explicitly maybe?
@@ -29,13 +35,13 @@ impl LoxFunction {
         args: Vec<Object>,
         interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
-        if self.params.len() != args.len() {
-            return Err(Error::WrongArity(self.params.len(), args.len()));
+        if self.0.params.len() != args.len() {
+            return Err(Error::WrongArity(self.0.params.len(), args.len()));
         }
 
-        let mut env = Environment::with_enclosing(&interpreter.globals);
+        let mut env = Environment::with_enclosing(&self.0.closure);
 
-        for (param, arg) in self.params.iter().zip(args.into_iter()) {
+        for (param, arg) in self.0.params.iter().zip(args.into_iter()) {
             env.define(param.clone(), arg);
         }
 
@@ -43,7 +49,7 @@ impl LoxFunction {
         // Return behaves like an error in that it propagates upwards
         // until we catch it. Catch it here.
         let old_env = interpreter.swap_environment(env);
-        let result = match interpreter.eval_statement(&self.body) {
+        let result = match interpreter.eval_statement(&self.0.body) {
             Ok(_) => Ok(Object::Nil),
             Err(Error::Return(obj)) => Ok(obj),
             Err(e) => Err(e),
@@ -54,8 +60,16 @@ impl LoxFunction {
     }
 }
 
-impl fmt::Debug for LoxFunction {
+impl fmt::Debug for LoxFunctionPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<built-in {}>", self.name)
+        write!(f, "<function {}>", self.0.name)
     }
 }
+
+impl PartialEq<LoxFunctionPtr> for LoxFunctionPtr {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for LoxFunctionPtr {}

@@ -1,9 +1,7 @@
-use super::builtins::BuiltInFn;
+use super::builtins::BuiltInFnPtr;
 use super::errs::{Error, RuntimeResult};
-use super::function::LoxFunction;
+use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
-
-use crate::common::ast;
 
 use std::rc::Rc;
 
@@ -13,9 +11,8 @@ pub enum Object {
     Boolean(bool),
     String(String),
     Nil,
-    // Rc so that cloning doesn't need to copy the fn
-    BuiltInFunction(Rc<BuiltInFn>),
-    LoxFunction(Rc<LoxFunction>),
+    BuiltInFunction(BuiltInFnPtr),
+    LoxFunction(LoxFunctionPtr),
 }
 
 impl Object {

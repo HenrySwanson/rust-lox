@@ -1,21 +1,35 @@
 use super::errs::{Error, RuntimeResult};
 use super::interpreter::Interpreter;
 use super::object::Object;
+
 use std::fmt;
+use std::rc::Rc;
 
 /// Since we can't derive Eq on function pointers, and LLVM can do funny things
 /// under the hood, we require that every built-in have a distinct name.
 /// We have total control over the created built-ins, so this is achievable.
 
-pub struct BuiltInFn {
-    pub func: fn(Vec<Object>, &mut Interpreter) -> RuntimeResult<Object>,
-    pub arity: usize,
-    pub name: String,
+type FnType = fn(Vec<Object>, &mut Interpreter) -> RuntimeResult<Object>;
+
+struct BuiltInFnData {
+    name: String,
+    func: FnType,
+    arity: usize,
 }
 
-impl BuiltInFn {
-    pub fn name(&self) -> String {
-        self.name.clone()
+#[derive(Clone)]
+pub struct BuiltInFnPtr(Rc<BuiltInFnData>);
+
+impl BuiltInFnPtr {
+    // Private: only we can define builtins
+    fn new(name: &str, func: FnType, arity: usize) -> Self {
+        let name = name.to_owned();
+        let data = BuiltInFnData { name, func, arity };
+        BuiltInFnPtr(Rc::new(data))
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0.name
     }
 
     pub fn execute_call(
@@ -23,34 +37,30 @@ impl BuiltInFn {
         args: Vec<Object>,
         interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
-        if self.arity == args.len() {
-            (self.func)(args, interpreter)
+        if self.0.arity == args.len() {
+            (self.0.func)(args, interpreter)
         } else {
-            Err(Error::WrongArity(self.arity, args.len()))
+            Err(Error::WrongArity(self.0.arity, args.len()))
         }
     }
 }
 
-impl fmt::Debug for BuiltInFn {
+impl fmt::Debug for BuiltInFnPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<built-in {}>", self.name)
+        write!(f, "<built-in {}>", self.0.name)
     }
 }
 
-impl PartialEq<BuiltInFn> for BuiltInFn {
-    fn eq(&self, other: &BuiltInFn) -> bool {
-        self.name == other.name
+impl PartialEq<BuiltInFnPtr> for BuiltInFnPtr {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for BuiltInFn {}
+impl Eq for BuiltInFnPtr {}
 
-pub fn get_builtins() -> Vec<BuiltInFn> {
-    vec![BuiltInFn {
-        func: clock,
-        arity: 0,
-        name: "clock".to_owned(),
-    }]
+pub fn get_builtins() -> Vec<BuiltInFnPtr> {
+    vec![BuiltInFnPtr::new("clock", clock, 0)]
 }
 
 fn clock(_args: Vec<Object>, _interpreter: &mut Interpreter) -> RuntimeResult<Object> {

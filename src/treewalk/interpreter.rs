@@ -1,7 +1,7 @@
 use super::builtins::get_builtins;
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
-use super::function::LoxFunction;
+use super::function::LoxFunctionPtr;
 use super::object::Object;
 
 use crate::common::ast;
@@ -18,8 +18,8 @@ impl Interpreter {
     pub fn new() -> Self {
         let mut env = Environment::new();
         for builtin in get_builtins().into_iter() {
-            let name = builtin.name.clone();
-            let obj = Object::BuiltInFunction(Rc::new(builtin));
+            let name = builtin.name().to_owned();
+            let obj = Object::BuiltInFunction(builtin);
             env.define(name, obj);
         }
         let globals = env.clone();
@@ -58,9 +58,13 @@ impl Interpreter {
             }
             ast::Stmt::Block(stmts) => self.eval_block(stmts),
             ast::Stmt::FunctionDecl(name, params, body) => {
-                let func = LoxFunction::new(name.clone(), params.clone(), *body.clone());
-                self.env
-                    .define(name.clone(), Object::LoxFunction(Rc::new(func)));
+                let func = LoxFunctionPtr::new(
+                    name.clone(),
+                    params.clone(),
+                    *body.clone(),
+                    self.env.clone(),
+                );
+                self.env.define(name.clone(), Object::LoxFunction(func));
                 Ok(())
             }
             ast::Stmt::Return(expr) => {
