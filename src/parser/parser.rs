@@ -263,7 +263,7 @@ where
             Token::False => ast::Expr::BooleanLiteral(false),
             Token::String(s) => ast::Expr::StringLiteral(s),
             Token::Nil => ast::Expr::NilLiteral,
-            Token::Identifier(name) => ast::Expr::Variable(name),
+            Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
             // Parentheses
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
@@ -324,13 +324,13 @@ where
                 self.bump();
 
                 // The LHS must be an identifier
-                let name = match lhs {
-                    ast::Expr::Variable(name) => name,
+                let var = match lhs {
+                    ast::Expr::Variable(var) => ast::VariableRef::new(var.name.clone()),
                     _ => return Err(Error::ExpectedIdentifier(span.start_pos)),
                 };
 
                 let rhs = self.pratt_parse(Precedence::Assignment)?;
-                lhs = ast::Expr::Assignment(name, Box::new(rhs));
+                lhs = ast::Expr::Assignment(var, Box::new(rhs));
                 continue;
             }
 

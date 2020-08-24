@@ -1,5 +1,6 @@
 use super::errs::{Error, RuntimeResult};
 use super::object::Object;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -37,34 +38,47 @@ impl Environment {
     }
 
     /// Define (or redefine) a variable
-    pub fn define(&mut self, name: String, value: Object) {
+    pub fn define(&self, name: String, value: Object) {
         self.ptr.borrow_mut().values.insert(name, value);
     }
 
     /// Set an existing variable
-    pub fn set(&mut self, name: String, value: Object) -> RuntimeResult<()> {
-        let mut interior = self.ptr.borrow_mut();
-
-        if let Some(slot) = interior.values.get_mut(&name) {
-            *slot = value;
-            return Ok(());
-        }
-
-        match interior.enclosing {
-            Some(ref mut env) => env.set(name, value),
-            None => Err(Error::UndefinedVariable(name)),
+    pub fn set(&self, name: &str, value: Object) -> RuntimeResult<()> {
+        match self.ptr.borrow_mut().values.get_mut(name) {
+            Some(slot) => {
+                *slot = value;
+                Ok(())
+            }
+            None => Err(Error::UndefinedVariable(name.to_owned())),
         }
     }
 
     pub fn get(&self, name: &str) -> RuntimeResult<Object> {
-        let interior = self.ptr.borrow();
-
-        match interior.values.get(name) {
+        match self.ptr.borrow_mut().values.get(name) {
             Some(obj) => Ok(obj.clone()),
-            None => match &interior.enclosing {
-                Some(env) => env.get(name),
-                None => Err(Error::UndefinedVariable(name.to_owned())),
-            },
+            None => Err(Error::UndefinedVariable(name.to_owned())),
         }
+    }
+
+    fn ancestor(&self, hops: usize) -> Environment {
+        if hops == 0 {
+            // Cloning is okay, because we'll create a new Rc to the same RefCell
+            self.clone()
+        } else {
+            self.ptr
+                .borrow()
+                .enclosing
+                .as_ref()
+                .expect("Resolver error: hopped beyond global")
+                .ancestor(hops - 1)
+        }
+    }
+
+    pub fn set_at(&self, hops: usize, name: &str, value: Object) -> RuntimeResult<()> {
+        self.ancestor(hops).set(name, value)
+    }
+
+    pub fn get_at(&mut self, hops: usize, name: &str) -> RuntimeResult<Object> {
+        self.ancestor(hops).get(name)
     }
 }

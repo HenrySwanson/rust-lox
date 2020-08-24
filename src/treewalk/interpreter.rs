@@ -7,8 +7,6 @@ use super::object::Object;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
-use std::rc::Rc;
-
 pub struct Interpreter {
     pub env: Environment,
     pub globals: Environment,
@@ -16,7 +14,7 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut env = Environment::new();
+        let env = Environment::new();
         for builtin in get_builtins().into_iter() {
             let name = builtin.name().to_owned();
             let obj = Object::BuiltInFunction(builtin);
@@ -127,10 +125,16 @@ impl Interpreter {
             ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
             ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
             ast::Expr::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
-            ast::Expr::Variable(name) => self.env.get(name),
-            ast::Expr::Assignment(name, expr) => {
+            ast::Expr::Variable(var) => match var.hops {
+                Some(hops) => self.env.get_at(hops, &var.name),
+                None => self.globals.get(&var.name),
+            },
+            ast::Expr::Assignment(var, expr) => {
                 let value = self.eval_expression(expr)?;
-                self.env.set(name.clone(), value.clone())?;
+                match var.hops {
+                    Some(hops) => self.env.set_at(hops, &var.name, value.clone())?,
+                    None => self.globals.set(&var.name, value.clone())?,
+                }
                 Ok(value)
             }
             ast::Expr::Call(callee, args) => self.eval_function_call(callee, args),

@@ -1,5 +1,5 @@
 use crate::lexer::Lexer;
-use crate::parser::Parser;
+use crate::parser::{Parser, Resolver};
 use crate::treewalk::Interpreter;
 use io::Write;
 use std::{env, fs, io, process};
@@ -86,10 +86,19 @@ fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
     //     println!("{:?}", s);
     // }
 
-    let statements: Vec<_> = match statements.into_iter().collect() {
+    let mut statements: Vec<_> = match statements.into_iter().collect() {
         Ok(statements) => statements,
         Err(e) => return Err(format!("{:?}", e)),
     };
+
+    // Resolve variable references
+    let mut resolver = Resolver::new();
+    for s in statements.iter_mut() {
+        match resolver.resolve_root(s) {
+            Ok(_) => (),
+            Err(e) => return Err(format!("{:?}", e)),
+        }
+    }
 
     // And evaluate the statements
     match interpreter.eval_statements(statements) {

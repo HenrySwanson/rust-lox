@@ -39,7 +39,7 @@ impl LoxFunctionPtr {
             return Err(Error::WrongArity(self.0.params.len(), args.len()));
         }
 
-        let mut env = Environment::with_enclosing(&self.0.closure);
+        let env = Environment::with_enclosing(&self.0.closure);
 
         for (param, arg) in self.0.params.iter().zip(args.into_iter()) {
             env.define(param.clone(), arg);
