@@ -29,13 +29,21 @@ fn run_prompt() {
 
     loop {
         let mut input = String::new();
-
-        // TODO maybe only interpret once i get two blank lines?
         print!("> ");
-        io::stdout().flush().unwrap();
-        io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read line");
+
+        loop {
+            io::stdout().flush().unwrap();
+            let bytes_read = io::stdin()
+                .read_line(&mut input)
+                .expect("Failed to read line");
+
+            // If we get a blank line,
+            if bytes_read <= 1 {
+                break;
+            }
+
+            print!("  ");
+        }
 
         match run(&mut interpreter, &input) {
             Ok(_) => {}
