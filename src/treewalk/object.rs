@@ -1,9 +1,8 @@
 use super::builtins::BuiltInFnPtr;
+use super::class::{LoxClassPtr, LoxInstancePtr};
 use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
-
-use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Object {
@@ -13,6 +12,8 @@ pub enum Object {
     Nil,
     BuiltInFunction(BuiltInFnPtr),
     LoxFunction(LoxFunctionPtr),
+    LoxClass(LoxClassPtr),
+    LoxInstance(LoxInstancePtr),
 }
 
 impl Object {
@@ -32,6 +33,7 @@ impl Object {
         match self {
             Object::BuiltInFunction(builtin) => builtin.execute_call(args, interpreter),
             Object::LoxFunction(func) => func.execute_call(args, interpreter),
+            Object::LoxClass(class) => class.execute_call(args, interpreter),
             _ => Err(Error::NotACallable(self.clone())),
         }
     }

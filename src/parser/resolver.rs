@@ -75,9 +75,9 @@ impl Resolver {
                 self.resolve_expression(cond)?;
                 self.resolve_statement(body)?;
             }
-            ast::Stmt::FunctionDecl(name, params, body) => {
+            ast::Stmt::FunctionDecl(fn_data) => {
                 // Define eagerly, so that the function can refer to itself recursively.
-                self.define(name);
+                self.define(&fn_data.name);
 
                 // Push a new scope, save the previous function context, and apply
                 // the new one.
@@ -86,11 +86,11 @@ impl Resolver {
                 self.function_ctx = FunctionContext::Function;
 
                 // Define parameters
-                for name in params.iter() {
+                for name in fn_data.params.iter() {
                     self.define(name)
                 }
 
-                self.resolve_statement(body)?;
+                self.resolve_statement(&mut fn_data.body)?;
 
                 // Reverse the previous steps
                 self.function_ctx = prev_ctx;
@@ -102,6 +102,7 @@ impl Resolver {
                 }
                 self.resolve_expression(expr)?
             }
+            ast::Stmt::ClassDecl(name, _) => self.define(&name),
         }
         Ok(())
     }
@@ -137,6 +138,13 @@ impl Resolver {
                 for a in arg_exprs.iter_mut() {
                     self.resolve_expression(a)?;
                 }
+            }
+            ast::Expr::Get(subexpr, _) => {
+                self.resolve_expression(subexpr)?;
+            }
+            ast::Expr::Set(subexpr, _, value) => {
+                self.resolve_expression(subexpr)?;
+                self.resolve_expression(value)?;
             }
         }
         Ok(())

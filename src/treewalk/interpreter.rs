@@ -1,4 +1,5 @@
 use super::builtins::get_builtins;
+use super::class::LoxClassPtr;
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
@@ -41,35 +42,38 @@ impl Interpreter {
         match stmt {
             ast::Stmt::Expression(expr) => {
                 self.eval_expression(expr)?;
-                Ok(())
             }
             ast::Stmt::Print(expr) => {
                 println!("[out] {:?}", self.eval_expression(expr)?);
-                Ok(())
             }
-            ast::Stmt::IfElse(cond, body, else_body) => self.eval_if_else(cond, body, else_body),
-            ast::Stmt::While(cond, body) => self.eval_while(cond, body),
+            ast::Stmt::IfElse(cond, body, else_body) => self.eval_if_else(cond, body, else_body)?,
+            ast::Stmt::While(cond, body) => self.eval_while(cond, body)?,
             ast::Stmt::VariableDecl(name, expr) => {
                 let value = self.eval_expression(expr)?;
                 self.env.define(name.clone(), value);
-                Ok(())
             }
-            ast::Stmt::Block(stmts) => self.eval_block(stmts),
-            ast::Stmt::FunctionDecl(name, params, body) => {
+            ast::Stmt::Block(stmts) => self.eval_block(stmts)?,
+            ast::Stmt::FunctionDecl(fn_data) => {
                 let func = LoxFunctionPtr::new(
-                    name.clone(),
-                    params.clone(),
-                    *body.clone(),
+                    fn_data.name.clone(),
+                    fn_data.params.clone(),
+                    *fn_data.body.clone(),
                     self.env.clone(),
                 );
-                self.env.define(name.clone(), Object::LoxFunction(func));
-                Ok(())
+                self.env
+                    .define(fn_data.name.clone(), Object::LoxFunction(func));
             }
             ast::Stmt::Return(expr) => {
                 let value = self.eval_expression(expr)?;
-                Err(Error::Return(value))
+                return Err(Error::Return(value));
+            }
+            ast::Stmt::ClassDecl(name, _methods) => {
+                let class = LoxClassPtr::new(name.clone());
+                self.env.define(name.clone(), Object::LoxClass(class));
             }
         }
+
+        Ok(())
     }
 
     fn eval_if_else(
@@ -138,6 +142,10 @@ impl Interpreter {
                 Ok(value)
             }
             ast::Expr::Call(callee, args) => self.eval_function_call(callee, args),
+            ast::Expr::Get(subexpr, property) => self.eval_property_access(subexpr, property),
+            ast::Expr::Set(subexpr, property, value) => {
+                self.eval_property_mutation(subexpr, property, value)
+            }
         }
     }
 
@@ -226,6 +234,29 @@ impl Interpreter {
         }
 
         callee.execute_call(args, self)
+    }
+
+    fn eval_property_access(&mut self, expr: &ast::Expr, property: &str) -> RuntimeResult<Object> {
+        match self.eval_expression(expr)? {
+            Object::LoxInstance(instance) => Ok(instance.get(property)?),
+            obj => Err(Error::NotAnInstance(obj.clone())),
+        }
+    }
+
+    fn eval_property_mutation(
+        &mut self,
+        expr: &ast::Expr,
+        property: &str,
+        value: &ast::Expr,
+    ) -> RuntimeResult<Object> {
+        let instance = match self.eval_expression(expr)? {
+            Object::LoxInstance(instance) => instance,
+            obj => return Err(Error::NotAnInstance(obj.clone())),
+        };
+        let value = self.eval_expression(value)?;
+        instance.set(property, value.clone())?;
+
+        Ok(value)
     }
 }
 

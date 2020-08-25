@@ -17,6 +17,7 @@ pub enum Error {
     ExpectedTokenAt(Token, CodePosition, Token),
     ExpectedExprAt(CodePosition, Token),
     ExpectedIdentifier(CodePosition),
+    ExpectedLValue(CodePosition),
     TooManyArgs(CodePosition),
 }
 
@@ -114,18 +115,40 @@ where
 
                 Ok(ast::Stmt::VariableDecl(name, expr))
             }
-            Token::Fun => self.parse_function_decl(),
+            Token::Fun => {
+                let fn_data = self.parse_function_data(true)?;
+                Ok(ast::Stmt::FunctionDecl(fn_data))
+            }
+            Token::Class => self.parse_class_decl(),
             _ => self.parse_statement(),
         }
     }
 
-    fn parse_function_decl(&mut self) -> ParseResult<ast::Stmt> {
-        self.eat(Token::Fun)?;
+    fn parse_function_data(&mut self, leading_fun: bool) -> ParseResult<ast::FunctionData> {
+        if leading_fun {
+            self.eat(Token::Fun)?;
+        }
         let name = self.parse_identifier()?;
         let params = self.parse_fn_params()?;
         let body = self.parse_block_statement()?;
 
-        Ok(ast::Stmt::FunctionDecl(name, params, Box::new(body)))
+        let fn_data = ast::FunctionData::new(name, params, body);
+        Ok(fn_data)
+    }
+
+    fn parse_class_decl(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat(Token::Class)?;
+        let name = self.parse_identifier()?;
+
+        self.eat(Token::LeftBrace)?;
+
+        let mut methods = vec![];
+        while !self.try_eat(Token::RightBrace) {
+            let method_data = self.parse_function_data(false)?;
+            methods.push(method_data);
+        }
+
+        Ok(ast::Stmt::ClassDecl(name, methods))
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
@@ -320,17 +343,20 @@ where
                     break;
                 }
 
-                // Grab the operator
+                // Grab the operator and parse the RHS
                 self.bump();
-
-                // The LHS must be an identifier
-                let var = match lhs {
-                    ast::Expr::Variable(var) => ast::VariableRef::new(var.name.clone()),
-                    _ => return Err(Error::ExpectedIdentifier(span.start_pos)),
-                };
-
                 let rhs = self.pratt_parse(Precedence::Assignment)?;
-                lhs = ast::Expr::Assignment(var, Box::new(rhs));
+                let rhs_box = Box::new(rhs);
+
+                // The LHS must be converted to the appropriate format
+                let temp = match lhs {
+                    ast::Expr::Variable(var) => {
+                        ast::Expr::Assignment(ast::VariableRef::new(var.name), rhs_box)
+                    }
+                    ast::Expr::Get(expr, property) => ast::Expr::Set(expr, property, rhs_box),
+                    _ => return Err(Error::ExpectedLValue(span.start_pos)),
+                };
+                lhs = temp; // temp needed to appease the borrow checker
                 continue;
             }
 
@@ -345,6 +371,22 @@ where
                 let arguments = self.parse_fn_args()?;
 
                 lhs = ast::Expr::Call(Box::new(lhs), arguments);
+                continue;
+            }
+
+            // Is it a dot?
+            if let Token::Dot = token {
+                // Property access is also left-associative
+                if Precedence::Property < min_precedence {
+                    break;
+                }
+
+                // Grab the operator
+                self.bump();
+
+                // THe RHS must be an identifier
+                let rhs = self.parse_identifier()?;
+                lhs = ast::Expr::Get(Box::new(lhs), rhs);
                 continue;
             }
 

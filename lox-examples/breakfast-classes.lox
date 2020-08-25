@@ -1,0 +1,16 @@
+class Breakfast {
+  cook() {
+    print "Eggs a-fryin'!";
+  }
+
+  serve(who) {
+    print "Enjoy your breakfast, " + who + ".";
+  }
+}
+
+print Breakfast;
+
+var instance = Breakfast();
+instance.foo = 3;
+
+print instance.foo;

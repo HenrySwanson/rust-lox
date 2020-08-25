@@ -7,6 +7,13 @@ pub struct VariableRef {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FunctionData {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Box<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     NumberLiteral(u32),
     BooleanLiteral(bool),
@@ -18,6 +25,8 @@ pub enum Expr {
     Variable(VariableRef),
     Assignment(VariableRef, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
+    Get(Box<Expr>, String),
+    Set(Box<Expr>, String, Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -28,13 +37,24 @@ pub enum Stmt {
     Block(Vec<Stmt>),
     IfElse(Expr, Box<Stmt>, Box<Option<Stmt>>),
     While(Expr, Box<Stmt>),
-    FunctionDecl(String, Vec<String>, Box<Stmt>),
+    FunctionDecl(FunctionData),
     Return(Expr),
+    ClassDecl(String, Vec<FunctionData>),
 }
 
 impl VariableRef {
     pub fn new(name: String) -> Self {
         VariableRef { name, hops: None }
+    }
+}
+
+impl FunctionData {
+    pub fn new(name: String, params: Vec<String>, body: Stmt) -> Self {
+        FunctionData {
+            name,
+            params,
+            body: Box::new(body),
+        }
     }
 }
 
@@ -66,6 +86,13 @@ impl Expr {
                 let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();
                 format!("(call {} {})", callee.lispy_string(), exprs.join(" "))
             }
+            Expr::Get(expr, property) => format!("(get {} {})", expr.lispy_string(), property),
+            Expr::Set(expr, property, value) => format!(
+                "(set {} {} {})",
+                expr.lispy_string(),
+                property,
+                value.lispy_string()
+            ),
         }
     }
 }

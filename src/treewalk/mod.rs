@@ -1,4 +1,5 @@
 mod builtins;
+mod class;
 mod environment;
 mod errs;
 mod function;

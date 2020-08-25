@@ -10,6 +10,8 @@ pub enum Error {
     DivideByZero,
     WrongArity(usize, usize),
     NotACallable(Object),
+    NotAnInstance(Object),
+    NoSuchProperty(Object, String),
 }
 
 pub type RuntimeResult<T> = Result<T, Error>;
