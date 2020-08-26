@@ -78,8 +78,7 @@ impl Resolver {
             ast::Stmt::IfElse(cond, body, else_body) => {
                 self.resolve_expression(cond)?;
                 self.resolve_statement(body)?;
-                // TODO is there a better way to do this?
-                if let Some(ref mut else_body) = **else_body {
+                if let Some(else_body) = else_body {
                     self.resolve_statement(else_body)?
                 }
             }

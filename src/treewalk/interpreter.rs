@@ -46,7 +46,9 @@ impl Interpreter {
             ast::Stmt::Print(expr) => {
                 println!("[out] {:?}", self.eval_expression(expr)?);
             }
-            ast::Stmt::IfElse(cond, body, else_body) => self.eval_if_else(cond, body, else_body)?,
+            ast::Stmt::IfElse(cond, body, else_body) => {
+                self.eval_if_else(cond, body, else_body.as_deref())?
+            }
             ast::Stmt::While(cond, body) => self.eval_while(cond, body)?,
             ast::Stmt::VariableDecl(name, expr) => {
                 let value = self.eval_expression(expr)?;
@@ -80,7 +82,7 @@ impl Interpreter {
         &mut self,
         condition: &ast::Expr,
         body: &ast::Stmt,
-        else_body: &Option<ast::Stmt>,
+        else_body: Option<&ast::Stmt>,
     ) -> RuntimeResult<()> {
         if self.eval_expression(condition)?.is_truthy() {
             return self.eval_statement(body);

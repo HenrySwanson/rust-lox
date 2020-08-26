@@ -36,7 +36,7 @@ pub enum Stmt {
     Print(Expr),
     VariableDecl(String, Expr),
     Block(Vec<Stmt>),
-    IfElse(Expr, Box<Stmt>, Box<Option<Stmt>>),
+    IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
     FunctionDecl(FunctionData),
     Return(Expr),

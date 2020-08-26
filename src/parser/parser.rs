@@ -179,18 +179,14 @@ where
         let condition = self.parse_expression()?;
         self.eat(Token::RightParen)?;
 
-        let body = self.parse_statement()?;
+        let body = Box::new(self.parse_statement()?);
         let else_body = if self.try_eat(Token::Else) {
-            Some(self.parse_statement()?)
+            Some(Box::new(self.parse_statement()?))
         } else {
             None
         };
 
-        Ok(ast::Stmt::IfElse(
-            condition,
-            Box::new(body),
-            Box::new(else_body),
-        ))
+        Ok(ast::Stmt::IfElse(condition, body, else_body))
     }
 
     fn parse_while_statement(&mut self) -> ParseResult<ast::Stmt> {
