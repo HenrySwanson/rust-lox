@@ -4,6 +4,7 @@ use super::interpreter::Interpreter;
 use super::object::Object;
 
 use crate::common::ast;
+use crate::common::constants::THIS_STR;
 
 use std::fmt;
 use std::rc::Rc;
@@ -57,6 +58,19 @@ impl LoxFunctionPtr {
 
         interpreter.swap_environment(old_env);
         result
+    }
+
+    pub fn bind(&self, instance: Object) -> LoxFunctionPtr {
+        // We need to create another environment, one containing "this"
+        let new_env = Environment::with_enclosing(&self.0.closure);
+        new_env.define(THIS_STR.to_owned(), instance);
+
+        LoxFunctionPtr::new(
+            self.0.name.clone(),
+            self.0.params.clone(),
+            self.0.body.clone(),
+            new_env,
+        )
     }
 }
 

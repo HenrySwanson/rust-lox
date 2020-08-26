@@ -27,6 +27,7 @@ pub enum Expr {
     Call(Box<Expr>, Vec<Expr>),
     Get(Box<Expr>, String),
     Set(Box<Expr>, String, Box<Expr>),
+    This(VariableRef),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -93,6 +94,7 @@ impl Expr {
                 property,
                 value.lispy_string()
             ),
+            Expr::This(_) => String::from("this"),
         }
     }
 }

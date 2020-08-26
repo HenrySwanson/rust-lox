@@ -1,4 +1,6 @@
 use crate::common::ast;
+use crate::common::constants::THIS_STR;
+
 use std::collections::HashMap;
 
 type Scope = HashMap<String, VariableState>;
@@ -13,11 +15,19 @@ enum VariableState {
 enum FunctionContext {
     Global,
     Function,
+    Method,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ClassContext {
+    Global,
+    Class,
 }
 
 pub struct Resolver {
     scopes: Vec<Scope>,
     function_ctx: FunctionContext,
+    class_ctx: ClassContext,
 }
 
 #[derive(Debug)]
@@ -25,6 +35,7 @@ pub enum Error {
     UsedInOwnInitializer(String),
     RedefineLocalVar(String),
     ReturnAtTopLevel,
+    ThisOutsideClass,
 }
 
 pub type ResolveResult<T> = Result<T, Error>;
@@ -34,6 +45,7 @@ impl Resolver {
         Resolver {
             scopes: vec![],
             function_ctx: FunctionContext::Global,
+            class_ctx: ClassContext::Global,
         }
     }
 
@@ -76,25 +88,7 @@ impl Resolver {
                 self.resolve_statement(body)?;
             }
             ast::Stmt::FunctionDecl(fn_data) => {
-                // Define eagerly, so that the function can refer to itself recursively.
-                self.define(&fn_data.name);
-
-                // Push a new scope, save the previous function context, and apply
-                // the new one.
-                self.push_scope();
-                let prev_ctx = self.function_ctx;
-                self.function_ctx = FunctionContext::Function;
-
-                // Define parameters
-                for name in fn_data.params.iter() {
-                    self.define(name)
-                }
-
-                self.resolve_statement(&mut fn_data.body)?;
-
-                // Reverse the previous steps
-                self.function_ctx = prev_ctx;
-                self.pop_scope();
+                self.resolve_function(fn_data, FunctionContext::Function)?
             }
             ast::Stmt::Return(expr) => {
                 if self.function_ctx == FunctionContext::Global {
@@ -102,7 +96,25 @@ impl Resolver {
                 }
                 self.resolve_expression(expr)?
             }
-            ast::Stmt::ClassDecl(name, _) => self.define(&name),
+            ast::Stmt::ClassDecl(name, methods) => {
+                self.define(&name);
+
+                // Begin our own scope, and define this
+                self.push_scope();
+                self.define(THIS_STR);
+
+                // Stash our old class context
+                let prev_ctx = self.class_ctx;
+                self.class_ctx = ClassContext::Class;
+
+                for method_data in methods.iter_mut() {
+                    self.resolve_function(method_data, FunctionContext::Method)?
+                }
+
+                // Restore
+                self.pop_scope();
+                self.class_ctx = prev_ctx;
+            }
         }
         Ok(())
     }
@@ -146,7 +158,41 @@ impl Resolver {
                 self.resolve_expression(subexpr)?;
                 self.resolve_expression(value)?;
             }
+            ast::Expr::This(var) => {
+                if self.class_ctx == ClassContext::Global {
+                    return Err(Error::ThisOutsideClass);
+                }
+                self.resolve_local_variable(var);
+            }
         }
+        Ok(())
+    }
+
+    fn resolve_function(
+        &mut self,
+        fn_data: &mut ast::FunctionData,
+        ctx: FunctionContext,
+    ) -> ResolveResult<()> {
+        // Define eagerly, so that the function can refer to itself recursively.
+        self.define(&fn_data.name);
+
+        // Push a new scope, save the previous function context, and apply
+        // the new one.
+        self.push_scope();
+        let prev_ctx = self.function_ctx;
+        self.function_ctx = ctx;
+
+        // Define parameters
+        for name in fn_data.params.iter() {
+            self.define(name);
+        }
+
+        self.resolve_statement(&mut fn_data.body)?;
+
+        // Reverse the previous steps
+        self.function_ctx = prev_ctx;
+        self.pop_scope();
+
         Ok(())
     }
 

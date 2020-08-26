@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::constants::MAX_NUMBER_ARGS;
+use crate::common::constants::{MAX_NUMBER_ARGS, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
 use crate::common::span::CodePosition;
 use crate::common::token::{SpannedToken, Token};
@@ -287,6 +287,7 @@ where
             Token::String(s) => ast::Expr::StringLiteral(s),
             Token::Nil => ast::Expr::NilLiteral,
             Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
+            Token::This => ast::Expr::This(ast::VariableRef::new(THIS_STR.to_owned())),
             // Parentheses
             Token::LeftParen => {
                 let expr = self.parse_expression()?;

@@ -78,7 +78,7 @@ impl Environment {
         self.ancestor(hops).set(name, value)
     }
 
-    pub fn get_at(&mut self, hops: usize, name: &str) -> RuntimeResult<Object> {
+    pub fn get_at(&self, hops: usize, name: &str) -> RuntimeResult<Object> {
         self.ancestor(hops).get(name)
     }
 }

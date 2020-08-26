@@ -54,21 +54,21 @@ impl Interpreter {
             }
             ast::Stmt::Block(stmts) => self.eval_block(stmts)?,
             ast::Stmt::FunctionDecl(fn_data) => {
-                let func = LoxFunctionPtr::new(
+                self.env.define(
                     fn_data.name.clone(),
-                    fn_data.params.clone(),
-                    *fn_data.body.clone(),
-                    self.env.clone(),
+                    Object::LoxFunction(self.make_fn_ptr(fn_data)),
                 );
-                self.env
-                    .define(fn_data.name.clone(), Object::LoxFunction(func));
             }
             ast::Stmt::Return(expr) => {
                 let value = self.eval_expression(expr)?;
                 return Err(Error::Return(value));
             }
-            ast::Stmt::ClassDecl(name, _methods) => {
-                let class = LoxClassPtr::new(name.clone());
+            ast::Stmt::ClassDecl(name, methods) => {
+                let methods = methods
+                    .iter()
+                    .map(|m| (m.name.clone(), self.make_fn_ptr(m)))
+                    .collect();
+                let class = LoxClassPtr::new(name.clone(), methods);
                 self.env.define(name.clone(), Object::LoxClass(class));
             }
         }
@@ -129,10 +129,7 @@ impl Interpreter {
             ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
             ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
             ast::Expr::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
-            ast::Expr::Variable(var) => match var.hops {
-                Some(hops) => self.env.get_at(hops, &var.name),
-                None => self.globals.get(&var.name),
-            },
+            ast::Expr::Variable(var) => self.lookup_local_var(var),
             ast::Expr::Assignment(var, expr) => {
                 let value = self.eval_expression(expr)?;
                 match var.hops {
@@ -146,6 +143,7 @@ impl Interpreter {
             ast::Expr::Set(subexpr, property, value) => {
                 self.eval_property_mutation(subexpr, property, value)
             }
+            ast::Expr::This(var) => self.lookup_local_var(var),
         }
     }
 
@@ -257,6 +255,24 @@ impl Interpreter {
         instance.set(property, value.clone())?;
 
         Ok(value)
+    }
+
+    // ---- various helpers ----
+
+    fn make_fn_ptr(&self, fn_data: &ast::FunctionData) -> LoxFunctionPtr {
+        LoxFunctionPtr::new(
+            fn_data.name.clone(),
+            fn_data.params.clone(),
+            *fn_data.body.clone(),
+            self.env.clone(),
+        )
+    }
+
+    fn lookup_local_var(&self, var: &ast::VariableRef) -> RuntimeResult<Object> {
+        match var.hops {
+            Some(hops) => self.env.get_at(hops, &var.name),
+            None => self.globals.get(&var.name),
+        }
     }
 }
 

@@ -1,8 +1,7 @@
 use super::errs::{Error, RuntimeResult};
+use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
 use super::object::Object;
-
-use crate::common::ast;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -11,6 +10,7 @@ use std::rc::Rc;
 
 struct LoxClassData {
     name: String,
+    methods: HashMap<String, LoxFunctionPtr>,
 }
 
 #[derive(Clone)]
@@ -26,15 +26,15 @@ pub struct LoxInstanceData {
 pub struct LoxInstancePtr(Rc<LoxInstanceData>);
 
 impl LoxClassPtr {
-    pub fn new(name: String) -> Self {
-        let data = LoxClassData { name };
+    pub fn new(name: String, methods: HashMap<String, LoxFunctionPtr>) -> Self {
+        let data = LoxClassData { name, methods };
         LoxClassPtr(Rc::new(data))
     }
 
     pub fn execute_call(
         &self,
         args: Vec<Object>,
-        interpreter: &mut Interpreter,
+        _interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
         // Arity is always zero
         if args.len() != 0 {
@@ -55,14 +55,21 @@ impl LoxInstancePtr {
         LoxInstancePtr(Rc::new(data))
     }
 
-    pub fn get(&self, property: &str) -> RuntimeResult<Object> {
-        match self.0.props.borrow().get(property) {
-            Some(value) => Ok(value.clone()),
-            None => {
-                let obj = Object::LoxInstance(self.clone());
-                Err(Error::NoSuchProperty(obj, property.to_owned()))
-            }
+    pub fn get(&self, name: &str) -> RuntimeResult<Object> {
+        // Check if it's a property
+        if let Some(value) = self.0.props.borrow().get(name) {
+            return Ok(value.clone());
         }
+
+        // Check if it's a method
+        if let Some(method_ptr) = self.0.class.0.methods.get(name) {
+            let self_as_instance = Object::LoxInstance(self.clone());
+            let bound_method = method_ptr.clone().bind(self_as_instance);
+            return Ok(Object::LoxFunction(bound_method));
+        }
+
+        let obj = Object::LoxInstance(self.clone());
+        Err(Error::NoSuchProperty(obj, name.to_owned()))
     }
 
     pub fn set(&self, property: &str, value: Object) -> RuntimeResult<()> {
