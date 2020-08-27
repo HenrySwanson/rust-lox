@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::constants::THIS_STR;
+use crate::common::constants::{INIT_STR, THIS_STR};
 
 use std::collections::HashMap;
 
@@ -16,6 +16,7 @@ enum FunctionContext {
     Global,
     Function,
     Method,
+    Initializer,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -36,6 +37,7 @@ pub enum Error {
     RedefineLocalVar(String),
     ReturnAtTopLevel,
     ThisOutsideClass,
+    ReturnInInitializer,
 }
 
 pub type ResolveResult<T> = Result<T, Error>;
@@ -93,6 +95,12 @@ impl Resolver {
                 if self.function_ctx == FunctionContext::Global {
                     return Err(Error::ReturnAtTopLevel);
                 }
+                // TODO change return to take an optional, because `return nil` is different than `return` here
+                if self.function_ctx == FunctionContext::Initializer
+                    && *expr != ast::Expr::NilLiteral
+                {
+                    return Err(Error::ReturnInInitializer);
+                }
                 self.resolve_expression(expr)?
             }
             ast::Stmt::ClassDecl(name, methods) => {
@@ -107,7 +115,12 @@ impl Resolver {
                 self.class_ctx = ClassContext::Class;
 
                 for method_data in methods.iter_mut() {
-                    self.resolve_function(method_data, FunctionContext::Method)?
+                    let ctx = if method_data.name == INIT_STR {
+                        FunctionContext::Initializer
+                    } else {
+                        FunctionContext::Method
+                    };
+                    self.resolve_function(method_data, ctx)?;
                 }
 
                 // Restore

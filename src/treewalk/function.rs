@@ -13,6 +13,7 @@ struct LoxFunctionData {
     name: String,
     params: Vec<String>,
     body: ast::Stmt,
+    is_initializer: bool,
     closure: Environment,
 }
 
@@ -20,24 +21,34 @@ struct LoxFunctionData {
 pub struct LoxFunctionPtr(Rc<LoxFunctionData>);
 
 impl LoxFunctionPtr {
-    pub fn new(name: String, params: Vec<String>, body: ast::Stmt, closure: Environment) -> Self {
+    pub fn new(
+        name: String,
+        params: Vec<String>,
+        body: ast::Stmt,
+        is_initializer: bool,
+        closure: Environment,
+    ) -> Self {
         let data = LoxFunctionData {
             name,
             params,
             body,
+            is_initializer,
             closure,
         };
         LoxFunctionPtr(Rc::new(data))
     }
 
-    // TODO this is gross! can you pass around the environment explicitly maybe?
+    pub fn arity(&self) -> usize {
+        self.0.params.len()
+    }
+
     pub fn execute_call(
         &self,
         args: Vec<Object>,
         interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
-        if self.0.params.len() != args.len() {
-            return Err(Error::WrongArity(self.0.params.len(), args.len()));
+        if self.arity() != args.len() {
+            return Err(Error::WrongArity(self.arity(), args.len()));
         }
 
         let env = Environment::with_enclosing(&self.0.closure);
@@ -57,7 +68,18 @@ impl LoxFunctionPtr {
         };
 
         interpreter.swap_environment(old_env);
-        result
+
+        // Now we throw errors, after swapping the env back in
+        let result = result?;
+
+        // Initializers are special kinds of functions, deal with them here
+        if self.0.is_initializer {
+            let this = self.0.closure.get(THIS_STR);
+            let this = this.expect("`this` not found in bound method closure");
+            Ok(this)
+        } else {
+            Ok(result)
+        }
     }
 
     pub fn bind(&self, instance: Object) -> LoxFunctionPtr {
@@ -69,6 +91,7 @@ impl LoxFunctionPtr {
             self.0.name.clone(),
             self.0.params.clone(),
             self.0.body.clone(),
+            self.0.is_initializer,
             new_env,
         )
     }

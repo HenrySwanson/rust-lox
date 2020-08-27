@@ -3,6 +3,8 @@ use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
 use super::object::Object;
 
+use crate::common::constants::INIT_STR;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -31,17 +33,29 @@ impl LoxClassPtr {
         LoxClassPtr(Rc::new(data))
     }
 
+    pub fn arity(&self) -> usize {
+        match self.0.methods.get(INIT_STR) {
+            Some(init) => init.arity(),
+            None => 0,
+        }
+    }
+
     pub fn execute_call(
         &self,
         args: Vec<Object>,
-        _interpreter: &mut Interpreter,
+        interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
-        // Arity is always zero
-        if args.len() != 0 {
-            return Err(Error::WrongArity(0, args.len()));
+        // Check the arity
+        if self.arity() != args.len() {
+            return Err(Error::WrongArity(self.arity(), args.len()));
         }
 
+        // Create instance and run the initializer
         let instance = LoxInstancePtr::new(self);
+        if let Some(init) = instance.find_bound_method(INIT_STR) {
+            init.execute_call(args, interpreter)?;
+        }
+
         Ok(Object::LoxInstance(instance))
     }
 }
@@ -57,24 +71,36 @@ impl LoxInstancePtr {
 
     pub fn get(&self, name: &str) -> RuntimeResult<Object> {
         // Check if it's a property
-        if let Some(value) = self.0.props.borrow().get(name) {
-            return Ok(value.clone());
+        if let Some(obj) = self.find_property(name) {
+            return Ok(obj);
         }
 
         // Check if it's a method
-        if let Some(method_ptr) = self.0.class.0.methods.get(name) {
-            let self_as_instance = Object::LoxInstance(self.clone());
-            let bound_method = method_ptr.clone().bind(self_as_instance);
-            return Ok(Object::LoxFunction(bound_method));
+        if let Some(method) = self.find_bound_method(name) {
+            return Ok(method);
         }
 
         let obj = Object::LoxInstance(self.clone());
         Err(Error::NoSuchProperty(obj, name.to_owned()))
     }
 
-    pub fn set(&self, property: &str, value: Object) -> RuntimeResult<()> {
+    pub fn set(&self, property: &str, value: Object) {
         self.0.props.borrow_mut().insert(property.to_owned(), value);
-        Ok(())
+    }
+
+    fn find_property(&self, name: &str) -> Option<Object> {
+        self.0.props.borrow().get(name).cloned()
+    }
+
+    fn find_bound_method(&self, name: &str) -> Option<Object> {
+        match self.0.class.0.methods.get(name) {
+            Some(method_ptr) => {
+                let self_as_instance = Object::LoxInstance(self.clone());
+                let bound_method = method_ptr.clone().bind(self_as_instance);
+                return Some(Object::LoxFunction(bound_method));
+            }
+            None => None,
+        }
     }
 }
 

@@ -6,6 +6,7 @@ use super::function::LoxFunctionPtr;
 use super::object::Object;
 
 use crate::common::ast;
+use crate::common::constants::INIT_STR;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 pub struct Interpreter {
@@ -58,7 +59,7 @@ impl Interpreter {
             ast::Stmt::FunctionDecl(fn_data) => {
                 self.env.define(
                     fn_data.name.clone(),
-                    Object::LoxFunction(self.make_fn_ptr(fn_data)),
+                    Object::LoxFunction(self.make_fn_ptr(fn_data, false)),
                 );
             }
             ast::Stmt::Return(expr) => {
@@ -68,7 +69,7 @@ impl Interpreter {
             ast::Stmt::ClassDecl(name, methods) => {
                 let methods = methods
                     .iter()
-                    .map(|m| (m.name.clone(), self.make_fn_ptr(m)))
+                    .map(|m| (m.name.clone(), self.make_fn_ptr(m, true)))
                     .collect();
                 let class = LoxClassPtr::new(name.clone(), methods);
                 self.env.define(name.clone(), Object::LoxClass(class));
@@ -254,18 +255,20 @@ impl Interpreter {
             obj => return Err(Error::NotAnInstance(obj.clone())),
         };
         let value = self.eval_expression(value)?;
-        instance.set(property, value.clone())?;
+        instance.set(property, value.clone());
 
         Ok(value)
     }
 
     // ---- various helpers ----
 
-    fn make_fn_ptr(&self, fn_data: &ast::FunctionData) -> LoxFunctionPtr {
+    fn make_fn_ptr(&self, fn_data: &ast::FunctionData, is_method: bool) -> LoxFunctionPtr {
+        let is_initializer = is_method && fn_data.name == INIT_STR;
         LoxFunctionPtr::new(
             fn_data.name.clone(),
             fn_data.params.clone(),
             *fn_data.body.clone(),
+            is_initializer,
             self.env.clone(),
         )
     }
