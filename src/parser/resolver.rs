@@ -95,13 +95,14 @@ impl Resolver {
                 if self.function_ctx == FunctionContext::Global {
                     return Err(Error::ReturnAtTopLevel);
                 }
-                // TODO change return to take an optional, because `return nil` is different than `return` here
-                if self.function_ctx == FunctionContext::Initializer
-                    && *expr != ast::Expr::NilLiteral
-                {
+
+                if self.function_ctx == FunctionContext::Initializer && expr.is_some() {
                     return Err(Error::ReturnInInitializer);
                 }
-                self.resolve_expression(expr)?
+
+                if let Some(expr) = expr {
+                    self.resolve_expression(expr)?;
+                }
             }
             ast::Stmt::ClassDecl(name, methods) => {
                 self.define(&name);

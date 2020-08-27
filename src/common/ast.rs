@@ -39,7 +39,7 @@ pub enum Stmt {
     IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
     FunctionDecl(FunctionData),
-    Return(Expr),
+    Return(Option<Expr>),
     ClassDecl(String, Vec<FunctionData>),
 }
 

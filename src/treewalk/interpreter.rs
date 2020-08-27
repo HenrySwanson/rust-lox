@@ -63,7 +63,10 @@ impl Interpreter {
                 );
             }
             ast::Stmt::Return(expr) => {
-                let value = self.eval_expression(expr)?;
+                let value = match expr {
+                    Some(expr) => self.eval_expression(expr)?,
+                    None => Object::Nil,
+                };
                 return Err(Error::Return(value));
             }
             ast::Stmt::ClassDecl(name, methods) => {

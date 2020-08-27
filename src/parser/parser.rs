@@ -247,9 +247,9 @@ where
     fn parse_return_statement(&mut self) -> ParseResult<ast::Stmt> {
         self.eat(Token::Return)?;
         let expr = if !self.check(Token::Semicolon) {
-            self.parse_expression()?
+            Some(self.parse_expression()?)
         } else {
-            ast::Expr::NilLiteral
+            None
         };
 
         self.eat(Token::Semicolon)?;
