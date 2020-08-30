@@ -28,6 +28,7 @@ pub enum Expr {
     Get(Box<Expr>, String),
     Set(Box<Expr>, String, Box<Expr>),
     This(VariableRef),
+    Super(VariableRef, String),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -40,7 +41,7 @@ pub enum Stmt {
     While(Expr, Box<Stmt>),
     FunctionDecl(FunctionData),
     Return(Option<Expr>),
-    ClassDecl(String, Vec<FunctionData>),
+    ClassDecl(String, Option<VariableRef>, Vec<FunctionData>),
 }
 
 impl VariableRef {
@@ -95,6 +96,7 @@ impl Expr {
                 value.lispy_string()
             ),
             Expr::This(_) => String::from("this"),
+            Expr::Super(_, method_name) => format!("(super {})", method_name),
         }
     }
 }

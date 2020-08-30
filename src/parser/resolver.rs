@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::constants::{INIT_STR, THIS_STR};
+use crate::common::constants::{INIT_STR, SUPER_STR, THIS_STR};
 
 use std::collections::HashMap;
 
@@ -23,6 +23,7 @@ enum FunctionContext {
 enum ClassContext {
     Global,
     Class,
+    Subclass,
 }
 
 pub struct Resolver {
@@ -38,6 +39,8 @@ pub enum Error {
     ReturnAtTopLevel,
     ThisOutsideClass,
     ReturnInInitializer,
+    InheritFromSelf,
+    SuperOutsideSubclass,
 }
 
 pub type ResolveResult<T> = Result<T, Error>;
@@ -104,16 +107,35 @@ impl Resolver {
                     self.resolve_expression(expr)?;
                 }
             }
-            ast::Stmt::ClassDecl(name, methods) => {
+            ast::Stmt::ClassDecl(name, superclass, methods) => {
+                // Define the class in the current scope
                 self.define(&name);
 
-                // Begin our own scope, and define this
+                // Resolve the superclass if it exists
+                if let Some(superclass) = superclass {
+                    if superclass.name == **name {
+                        return Err(Error::InheritFromSelf);
+                    }
+                    self.resolve_local_variable(superclass);
+                }
+
+                // If applicable, begin a new scope, defining super
+                if superclass.is_some() {
+                    self.push_scope();
+                    self.define(SUPER_STR);
+                }
+
+                // In all cases, begin our own scope, defining this
                 self.push_scope();
                 self.define(THIS_STR);
 
                 // Stash our old class context
                 let prev_ctx = self.class_ctx;
-                self.class_ctx = ClassContext::Class;
+                self.class_ctx = if superclass.is_some() {
+                    ClassContext::Subclass
+                } else {
+                    ClassContext::Class
+                };
 
                 for method_data in methods.iter_mut() {
                     let ctx = if method_data.name == INIT_STR {
@@ -124,9 +146,12 @@ impl Resolver {
                     self.resolve_function(method_data, ctx)?;
                 }
 
-                // Restore
-                self.pop_scope();
+                // Restore everything
                 self.class_ctx = prev_ctx;
+                self.pop_scope();
+                if superclass.is_some() {
+                    self.pop_scope();
+                }
             }
         }
         Ok(())
@@ -174,6 +199,12 @@ impl Resolver {
             ast::Expr::This(var) => {
                 if self.class_ctx == ClassContext::Global {
                     return Err(Error::ThisOutsideClass);
+                }
+                self.resolve_local_variable(var);
+            }
+            ast::Expr::Super(var, _) => {
+                if self.class_ctx != ClassContext::Subclass {
+                    return Err(Error::SuperOutsideSubclass);
                 }
                 self.resolve_local_variable(var);
             }

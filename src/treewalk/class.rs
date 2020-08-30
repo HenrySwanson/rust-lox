@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 struct LoxClassData {
     name: String,
+    superclass: Option<LoxClassPtr>,
     methods: HashMap<String, LoxFunctionPtr>,
 }
 
@@ -28,8 +29,16 @@ pub struct LoxInstanceData {
 pub struct LoxInstancePtr(Rc<LoxInstanceData>);
 
 impl LoxClassPtr {
-    pub fn new(name: String, methods: HashMap<String, LoxFunctionPtr>) -> Self {
-        let data = LoxClassData { name, methods };
+    pub fn new(
+        name: String,
+        superclass: Option<LoxClassPtr>,
+        methods: HashMap<String, LoxFunctionPtr>,
+    ) -> Self {
+        let data = LoxClassData {
+            name,
+            superclass,
+            methods,
+        };
         LoxClassPtr(Rc::new(data))
     }
 
@@ -57,6 +66,14 @@ impl LoxClassPtr {
         }
 
         Ok(Object::LoxInstance(instance))
+    }
+
+    pub fn find_method(&self, name: &str) -> Option<LoxFunctionPtr> {
+        let method_ptr = self.0.methods.get(name).cloned();
+        match &self.0.superclass {
+            Some(superclass) => method_ptr.or_else(|| superclass.find_method(name)),
+            None => method_ptr,
+        }
     }
 }
 
@@ -93,10 +110,10 @@ impl LoxInstancePtr {
     }
 
     fn find_bound_method(&self, name: &str) -> Option<Object> {
-        match self.0.class.0.methods.get(name) {
+        match self.0.class.find_method(name) {
             Some(method_ptr) => {
                 let self_as_instance = Object::LoxInstance(self.clone());
-                let bound_method = method_ptr.clone().bind(self_as_instance);
+                let bound_method = method_ptr.bind(self_as_instance);
                 return Some(Object::LoxFunction(bound_method));
             }
             None => None,

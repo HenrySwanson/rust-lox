@@ -11,6 +11,7 @@ pub enum Error {
     WrongArity(usize, usize),
     NotACallable(Object),
     NotAnInstance(Object),
+    NotAClass(Object),
     NoSuchProperty(Object, String),
 }
 

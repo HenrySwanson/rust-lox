@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::constants::{MAX_NUMBER_ARGS, THIS_STR};
+use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
 use crate::common::span::CodePosition;
 use crate::common::token::{SpannedToken, Token};
@@ -140,6 +140,12 @@ where
         self.eat(Token::Class)?;
         let name = self.parse_identifier()?;
 
+        let superclass = if self.try_eat(Token::LeftAngle) {
+            Some(ast::VariableRef::new(self.parse_identifier()?))
+        } else {
+            None
+        };
+
         self.eat(Token::LeftBrace)?;
 
         let mut methods = vec![];
@@ -148,7 +154,7 @@ where
             methods.push(method_data);
         }
 
-        Ok(ast::Stmt::ClassDecl(name, methods))
+        Ok(ast::Stmt::ClassDecl(name, superclass, methods))
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
@@ -284,6 +290,12 @@ where
             Token::Nil => ast::Expr::NilLiteral,
             Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
             Token::This => ast::Expr::This(ast::VariableRef::new(THIS_STR.to_owned())),
+            Token::Super => {
+                let var = ast::VariableRef::new(SUPER_STR.to_owned());
+                self.eat(Token::Dot)?;
+                let method_name = self.parse_identifier()?;
+                ast::Expr::Super(var, method_name)
+            }
             // Parentheses
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
@@ -381,7 +393,7 @@ where
                 // Grab the operator
                 self.bump();
 
-                // THe RHS must be an identifier
+                // The RHS must be an identifier
                 let rhs = self.parse_identifier()?;
                 lhs = ast::Expr::Get(Box::new(lhs), rhs);
                 continue;

@@ -1,0 +1,25 @@
+class Doughnut {
+  cook() {
+    print "Fry until golden brown.";
+  }
+
+  base_method(x) {
+    print(x);
+  }
+}
+
+class BostonCream < Doughnut {
+  cook() {
+    super.cook();
+    print "Pipe full of custard and coat with chocolate.";
+  }
+}
+
+var boston = BostonCream();
+
+boston.base_method(3);
+
+boston.cook();
+// Prints:
+// Fry until golden brown.
+// Pipe full of custard and coat with chocolate.

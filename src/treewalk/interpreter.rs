@@ -6,8 +6,10 @@ use super::function::LoxFunctionPtr;
 use super::object::Object;
 
 use crate::common::ast;
-use crate::common::constants::INIT_STR;
+use crate::common::constants::{INIT_STR, SUPER_STR, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
+
+use std::collections::HashMap;
 
 pub struct Interpreter {
     pub env: Environment,
@@ -69,12 +71,35 @@ impl Interpreter {
                 };
                 return Err(Error::Return(value));
             }
-            ast::Stmt::ClassDecl(name, methods) => {
-                let methods = methods
-                    .iter()
-                    .map(|m| (m.name.clone(), self.make_fn_ptr(m, true)))
-                    .collect();
-                let class = LoxClassPtr::new(name.clone(), methods);
+            ast::Stmt::ClassDecl(name, superclass_name, method_defs) => {
+                // Look up the super class
+                let superclass_cls = match superclass_name {
+                    None => None,
+                    Some(class) => match self.lookup_local_var(class)? {
+                        Object::LoxClass(class) => Some(class),
+                        obj => return Err(Error::NotAClass(obj)),
+                    },
+                };
+
+                // If there's a superclass, stash it in a new environment
+                let original_env = self.env.clone();
+                if let Some(superclass_cls) = &superclass_cls {
+                    let superclass_obj = Object::LoxClass(superclass_cls.clone());
+
+                    self.env = Environment::with_enclosing(&self.env);
+                    self.env.define(SUPER_STR.to_owned(), superclass_obj);
+                }
+
+                // Define the class and its methods
+                let mut methods = HashMap::new();
+                for m in method_defs.iter() {
+                    methods.insert(m.name.clone(), self.make_fn_ptr(m, true));
+                }
+
+                // Pop the possible env, and define the class in the original env
+                self.env = original_env;
+
+                let class = LoxClassPtr::new(name.clone(), superclass_cls, methods);
                 self.env.define(name.clone(), Object::LoxClass(class));
             }
         }
@@ -150,6 +175,22 @@ impl Interpreter {
                 self.eval_property_mutation(subexpr, property, value)
             }
             ast::Expr::This(var) => self.lookup_local_var(var),
+            ast::Expr::Super(var, method_name) => {
+                // This one's frisky. We need to look up the method in the superclass,
+                // and bind it to the instance object.
+                let superclass = match self.lookup_local_var(var)? {
+                    Object::LoxClass(c) => c,
+                    _ => panic!("super is not a class"),
+                };
+
+                let err_msg = "relationship between super and this broken";
+                let this_depth = var.hops.expect(err_msg).checked_sub(1).expect(err_msg);
+                let this = self.env.get_at(this_depth, THIS_STR).expect(err_msg);
+                match superclass.find_method(method_name) {
+                    Some(method) => Ok(Object::LoxFunction(method.bind(this))),
+                    None => Err(Error::NoSuchProperty(this.clone(), method_name.to_owned())),
+                }
+            }
         }
     }
 
