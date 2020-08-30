@@ -76,13 +76,13 @@ where
 
     /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token) -> ParseResult<()> {
-        let (token, span) = self.peek_token().split();
+        let token = self.peek_token();
 
-        if token == expected {
+        if token.token == expected {
             self.bump();
             Ok(())
         } else {
-            Err(Error::ExpectedTokenAt(expected, span.start_pos, token))
+            Err(Error::ExpectedTokenAt(expected, token.span.lo, token.token))
         }
     }
 
@@ -101,8 +101,8 @@ where
     }
 
     fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
-        let (token, _) = self.peek_token().split();
-        match token {
+        let token = self.peek_token();
+        match token.token {
             Token::Var => {
                 self.bump();
                 let name = self.parse_identifier()?;
@@ -158,8 +158,8 @@ where
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let (token, _) = self.peek_token().split();
-        match token {
+        let token = self.peek_token();
+        match token.token {
             Token::Print => {
                 self.bump();
                 let expr = self.parse_expression()?;
@@ -280,8 +280,8 @@ where
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, taking care of prefix expressions
-        let (token, span) = self.take_token().split();
-        let mut lhs = match token {
+        let token = self.take_token();
+        let mut lhs = match token.token {
             // Literals
             Token::Number(n) => ast::Expr::NumberLiteral(n),
             Token::True => ast::Expr::BooleanLiteral(true),
@@ -308,16 +308,15 @@ where
                     let expr = self.pratt_parse(op.precedence())?;
                     ast::Expr::Prefix(op, Box::new(expr))
                 }
-                None => return Err(Error::ExpectedExprAt(span.start_pos, t)),
+                None => return Err(Error::ExpectedExprAt(token.span.lo, t)),
             },
         };
 
         // Now we start consuming infix operators
         loop {
-            // Is it an infix operator?
-            let (token, span) = self.peek_token().split();
-            let span = span.to_owned(); // so we can drop the mutable borrow above
+            let SpannedToken {token, span} = self.peek_token();
 
+            // Is it an infix operator?
             if let Some(op) = InfixOperator::try_from_token(&token) {
                 // Since arithmetic and equality operators are left-associative,
                 // we should treat equal precedence as insufficient.
@@ -363,7 +362,7 @@ where
                         ast::Expr::Assignment(ast::VariableRef::new(var.name), rhs_box)
                     }
                     ast::Expr::Get(expr, property) => ast::Expr::Set(expr, property, rhs_box),
-                    _ => return Err(Error::ExpectedLValue(span.start_pos)),
+                    _ => return Err(Error::ExpectedLValue(span.lo)),
                 };
                 lhs = temp; // temp needed to appease the borrow checker
                 continue;
@@ -406,10 +405,10 @@ where
     }
 
     fn parse_identifier(&mut self) -> ParseResult<String> {
-        let (token, span) = self.take_token().split();
-        match token {
+        let token = self.take_token();
+        match token.token {
             Token::Identifier(name) => Ok(name.clone()),
-            _ => Err(Error::ExpectedIdentifier(span.start_pos)),
+            _ => Err(Error::ExpectedIdentifier(token.span.lo)),
         }
     }
 
@@ -433,7 +432,7 @@ where
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
             let span = self.peek_token().span;
-            return Err(Error::TooManyArgs(span.start_pos));
+            return Err(Error::TooManyArgs(span.lo));
         }
 
         Ok(args)
@@ -459,7 +458,7 @@ where
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
             let span = self.peek_token().span;
-            return Err(Error::TooManyArgs(span.start_pos));
+            return Err(Error::TooManyArgs(span.lo));
         }
 
         Ok(args)

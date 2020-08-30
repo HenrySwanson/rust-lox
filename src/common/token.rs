@@ -52,7 +52,7 @@ pub enum Token {
     EndOfFile,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
@@ -61,9 +61,5 @@ pub struct SpannedToken {
 impl SpannedToken {
     pub fn new(token: Token, span: Span) -> Self {
         SpannedToken { token, span }
-    }
-
-    pub fn split(self) -> (Token, Span) {
-        return (self.token, self.span);
     }
 }

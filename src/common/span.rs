@@ -11,8 +11,8 @@ pub struct CodePosition {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Span {
-    pub start_pos: CodePosition,
-    pub end_pos: CodePosition,
+    pub lo: CodePosition,
+    pub hi: CodePosition,
 }
 
 impl CodePosition {
@@ -28,16 +28,18 @@ impl fmt::Display for CodePosition {
 }
 
 impl Span {
-    pub fn new(start_pos: CodePosition, end_pos: CodePosition) -> Self {
-        Span { start_pos, end_pos }
+    pub fn new(mut lo: CodePosition, mut hi: CodePosition) -> Self {
+        if lo > hi {
+            std::mem::swap(&mut lo, &mut hi)
+        }
+        Span { lo, hi }
     }
 
-    /// Joins two spans into one continuous span.
-    pub fn unite(&self, other: &Self) -> Self {
-        Span {
-            start_pos: std::cmp::min(self.start_pos, other.start_pos),
-            end_pos: std::cmp::max(self.end_pos, other.end_pos),
-        }
+    pub fn to(&self, other: Self) -> Self {
+        Span::new(
+            std::cmp::min(self.lo, other.lo),
+            std::cmp::max(self.hi, other.hi),
+        )
     }
 }
 
@@ -73,9 +75,9 @@ mod tests {
         let c = Span::new(CodePosition::new(5, 3), CodePosition::new(6, 7));
         let d = Span::new(CodePosition::new(1, 7), CodePosition::new(6, 4));
 
-        assert_eq!(a.unite(&b), Span::new(a.start_pos, b.end_pos));
-        assert_eq!(a.unite(&c), Span::new(a.start_pos, c.end_pos));
-        assert_eq!(a.unite(&d), d);
-        assert_eq!(b.unite(&c), c.unite(&b));
+        assert_eq!(a.to(b), Span::new(a.lo, b.hi));
+        assert_eq!(a.to(c), Span::new(a.lo, c.hi));
+        assert_eq!(a.to(d), d);
+        assert_eq!(b.to(c), c.to(b));
     }
 }
