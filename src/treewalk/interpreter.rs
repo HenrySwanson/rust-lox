@@ -153,10 +153,7 @@ impl Interpreter {
 
     fn eval_expression(&mut self, expr: &ast::Expr) -> RuntimeResult<Object> {
         match expr {
-            ast::Expr::NumberLiteral(n) => Ok(Object::Number(*n as i64)),
-            ast::Expr::BooleanLiteral(b) => Ok(Object::Boolean(*b)),
-            ast::Expr::StringLiteral(s) => Ok(Object::String(s.clone())),
-            ast::Expr::NilLiteral => Ok(Object::Nil),
+            ast::Expr::Literal(lit) => Ok(self.eval_literal(lit)),
             ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
             ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
             ast::Expr::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
@@ -191,6 +188,15 @@ impl Interpreter {
                     None => Err(Error::NoSuchProperty(this.clone(), method_name.to_owned())),
                 }
             }
+        }
+    }
+
+    fn eval_literal(&self, lit: &ast::Literal) -> Object {
+        match lit {
+            ast::Literal::Number(n) => Object::Number(*n as i64),
+            ast::Literal::Boolean(b) => Object::Boolean(*b),
+            ast::Literal::Str(s) => Object::String(s.clone()),
+            ast::Literal::Nil => Object::Nil,
         }
     }
 
@@ -308,13 +314,7 @@ impl Interpreter {
 
     fn make_fn_ptr(&self, fn_data: &ast::FunctionData, is_method: bool) -> LoxFunctionPtr {
         let is_initializer = is_method && fn_data.name == INIT_STR;
-        LoxFunctionPtr::new(
-            fn_data.name.clone(),
-            fn_data.params.clone(),
-            *fn_data.body.clone(),
-            is_initializer,
-            self.env.clone(),
-        )
+        LoxFunctionPtr::new(fn_data.clone(), is_initializer, self.env.clone())
     }
 
     fn lookup_local_var(&self, var: &ast::VariableRef) -> RuntimeResult<Object> {

@@ -1,24 +1,21 @@
 use super::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct VariableRef {
-    pub name: String,
-    pub hops: Option<usize>, // used by the resolver
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct FunctionData {
-    pub name: String,
-    pub params: Vec<String>,
-    pub body: Box<Stmt>,
+pub enum Stmt {
+    Expression(Expr),
+    Print(Expr),
+    VariableDecl(String, Expr),
+    Block(Vec<Stmt>),
+    IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
+    While(Expr, Box<Stmt>),
+    FunctionDecl(FunctionData),
+    Return(Option<Expr>),
+    ClassDecl(String, Option<VariableRef>, Vec<FunctionData>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
-    NumberLiteral(u32),
-    BooleanLiteral(bool),
-    StringLiteral(String),
-    NilLiteral,
+    Literal(Literal),
     Infix(InfixOperator, Box<Expr>, Box<Expr>),
     Prefix(PrefixOperator, Box<Expr>),
     Logical(LogicalOperator, Box<Expr>, Box<Expr>),
@@ -32,32 +29,24 @@ pub enum Expr {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Stmt {
-    Expression(Expr),
-    Print(Expr),
-    VariableDecl(String, Expr),
-    Block(Vec<Stmt>),
-    IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
-    While(Expr, Box<Stmt>),
-    FunctionDecl(FunctionData),
-    Return(Option<Expr>),
-    ClassDecl(String, Option<VariableRef>, Vec<FunctionData>),
+pub enum Literal {
+    Number(u32),
+    Boolean(bool),
+    Str(String),
+    Nil,
 }
 
-impl VariableRef {
-    pub fn new(name: String) -> Self {
-        VariableRef { name, hops: None }
-    }
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct VariableRef {
+    pub name: String,
+    pub hops: Option<usize>, // used by the resolver
 }
 
-impl FunctionData {
-    pub fn new(name: String, params: Vec<String>, body: Stmt) -> Self {
-        FunctionData {
-            name,
-            params,
-            body: Box::new(body),
-        }
-    }
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FunctionData {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Box<Stmt>,
 }
 
 impl Expr {
@@ -65,10 +54,12 @@ impl Expr {
     /// with a lot of parentheses.
     pub fn lispy_string(&self) -> String {
         match self {
-            Expr::NumberLiteral(n) => n.to_string(),
-            Expr::BooleanLiteral(b) => b.to_string(),
-            Expr::StringLiteral(s) => format!("\"{}\"", s),
-            Expr::NilLiteral => "nil".to_owned(),
+            Expr::Literal(lit) => match lit {
+                Literal::Number(n) => n.to_string(),
+                Literal::Boolean(b) => b.to_string(),
+                Literal::Str(s) => format!("\"{}\"", s),
+                Literal::Nil => "nil".to_owned(),
+            },
             Expr::Infix(op, lhs, rhs) => format!(
                 "({} {} {})",
                 op.symbol(),
@@ -97,6 +88,22 @@ impl Expr {
             ),
             Expr::This(_) => String::from("this"),
             Expr::Super(_, method_name) => format!("(super {})", method_name),
+        }
+    }
+}
+
+impl VariableRef {
+    pub fn new(name: String) -> Self {
+        VariableRef { name, hops: None }
+    }
+}
+
+impl FunctionData {
+    pub fn new(name: String, params: Vec<String>, body: Stmt) -> Self {
+        FunctionData {
+            name,
+            params,
+            body: Box::new(body),
         }
     }
 }

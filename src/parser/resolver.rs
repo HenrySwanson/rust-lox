@@ -138,6 +138,7 @@ impl Resolver {
                 };
 
                 for method_data in methods.iter_mut() {
+                    // TODO move initializer detection to the parser?
                     let ctx = if method_data.name == INIT_STR {
                         FunctionContext::Initializer
                     } else {
@@ -159,10 +160,7 @@ impl Resolver {
 
     fn resolve_expression(&mut self, expr: &mut ast::Expr) -> ResolveResult<()> {
         match expr {
-            ast::Expr::NumberLiteral(_)
-            | ast::Expr::BooleanLiteral(_)
-            | ast::Expr::StringLiteral(_)
-            | ast::Expr::NilLiteral => (),
+            ast::Expr::Literal(_) => (),
             ast::Expr::Infix(_, lhs, rhs) => {
                 self.resolve_expression(lhs)?;
                 self.resolve_expression(rhs)?;

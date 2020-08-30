@@ -109,7 +109,7 @@ where
                 let expr = if self.try_eat(Token::Equals) {
                     self.parse_expression()?
                 } else {
-                    ast::Expr::NilLiteral
+                    from_lit(ast::Literal::Nil)
                 };
                 self.eat(Token::Semicolon)?;
 
@@ -222,7 +222,7 @@ where
         };
 
         let condition = if self.check(Token::Semicolon) {
-            ast::Expr::BooleanLiteral(true)
+            from_lit(ast::Literal::Boolean(true))
         } else {
             self.parse_expression()?
         };
@@ -280,41 +280,46 @@ where
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, taking care of prefix expressions
-        let token = self.take_token();
-        let mut lhs = match token.token {
-            // Literals
-            Token::Number(n) => ast::Expr::NumberLiteral(n),
-            Token::True => ast::Expr::BooleanLiteral(true),
-            Token::False => ast::Expr::BooleanLiteral(false),
-            Token::String(s) => ast::Expr::StringLiteral(s),
-            Token::Nil => ast::Expr::NilLiteral,
-            Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
-            Token::This => ast::Expr::This(ast::VariableRef::new(THIS_STR.to_owned())),
-            Token::Super => {
-                let var = ast::VariableRef::new(SUPER_STR.to_owned());
-                self.eat(Token::Dot)?;
-                let method_name = self.parse_identifier()?;
-                ast::Expr::Super(var, method_name)
+        let SpannedToken { token, span } = self.take_token();
+
+        // Check if it's a prefix expression
+        let mut lhs = match PrefixOperator::try_from_token(&token) {
+            Some(op) => {
+                let expr = self.pratt_parse(op.precedence())?;
+                ast::Expr::Prefix(op, Box::new(expr))
             }
-            // Parentheses
-            Token::LeftParen => {
-                let expr = self.parse_expression()?;
-                self.eat(Token::RightParen)?;
-                expr
-            }
-            // Well it had better be a prefix operator then
-            t => match PrefixOperator::try_from_token(&t) {
-                Some(op) => {
-                    let expr = self.pratt_parse(op.precedence())?;
-                    ast::Expr::Prefix(op, Box::new(expr))
+            None => match token {
+                // Literals
+                Token::Number(n) => from_lit(ast::Literal::Number(n)),
+                Token::True => from_lit(ast::Literal::Boolean(true)),
+                Token::False => from_lit(ast::Literal::Boolean(false)),
+                Token::String(s) => from_lit(ast::Literal::Str(s)),
+                Token::Nil => from_lit(ast::Literal::Nil),
+                // Other things
+                Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
+                Token::This => {
+                    let var = ast::VariableRef::new(THIS_STR.to_owned());
+                    ast::Expr::This(var)
                 }
-                None => return Err(Error::ExpectedExprAt(token.span.lo, t)),
+                Token::Super => {
+                    let var = ast::VariableRef::new(SUPER_STR.to_owned());
+                    self.eat(Token::Dot)?;
+                    let method_name = self.parse_identifier()?;
+                    ast::Expr::Super(var, method_name)
+                }
+                // Parentheses
+                Token::LeftParen => {
+                    let expr = self.parse_expression()?;
+                    self.eat(Token::RightParen)?;
+                    expr
+                }
+                t => return Err(Error::ExpectedExprAt(span.lo, t)),
             },
         };
 
         // Now we start consuming infix operators
         loop {
-            let SpannedToken {token, span} = self.peek_token();
+            let SpannedToken { token, span } = self.peek_token();
 
             // Is it an infix operator?
             if let Some(op) = InfixOperator::try_from_token(&token) {
@@ -465,11 +470,15 @@ where
     }
 }
 
+fn from_lit(lit: ast::Literal) -> ast::Expr {
+    ast::Expr::Literal(lit)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::common::ast::Expr;
+    use crate::common::ast::{Expr, Literal};
     use crate::common::operator::{InfixOperator, PrefixOperator};
     use crate::common::token::SpannedToken;
     use crate::lexer::Lexer;
@@ -490,8 +499,8 @@ mod tests {
             parse_expression("3+4"),
             Expr::Infix(
                 InfixOperator::Add,
-                Box::new(Expr::NumberLiteral(3)),
-                Box::new(Expr::NumberLiteral(4))
+                Box::new(Expr::Literal(Literal::Number(3))),
+                Box::new(Expr::Literal(Literal::Number(4)))
             )
         );
 
@@ -501,14 +510,14 @@ mod tests {
                 InfixOperator::Subtract,
                 Box::new(Expr::Infix(
                     InfixOperator::Add,
-                    Box::new(Expr::NumberLiteral(3)),
+                    Box::new(Expr::Literal(Literal::Number(3))),
                     Box::new(Expr::Infix(
                         InfixOperator::Multiply,
-                        Box::new(Expr::NumberLiteral(1)),
-                        Box::new(Expr::NumberLiteral(5))
+                        Box::new(Expr::Literal(Literal::Number(1))),
+                        Box::new(Expr::Literal(Literal::Number(5)))
                     ))
                 )),
-                Box::new(Expr::NumberLiteral(4))
+                Box::new(Expr::Literal(Literal::Number(4)))
             )
         );
 
@@ -518,12 +527,12 @@ mod tests {
                 InfixOperator::Multiply,
                 Box::new(Expr::Prefix(
                     PrefixOperator::Negate,
-                    Box::new(Expr::NumberLiteral(3))
+                    Box::new(Expr::Literal(Literal::Number(3)))
                 )),
                 Box::new(Expr::Infix(
                     InfixOperator::Add,
-                    Box::new(Expr::NumberLiteral(1)),
-                    Box::new(Expr::NumberLiteral(2))
+                    Box::new(Expr::Literal(Literal::Number(1))),
+                    Box::new(Expr::Literal(Literal::Number(2)))
                 ))
             )
         );
