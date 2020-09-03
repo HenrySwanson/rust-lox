@@ -42,36 +42,36 @@ impl Interpreter {
     }
 
     pub fn eval_statement(&mut self, stmt: &ast::Stmt) -> RuntimeResult<()> {
-        match stmt {
-            ast::Stmt::Expression(expr) => {
+        match &stmt.kind {
+            ast::StmtKind::Expression(expr) => {
                 self.eval_expression(expr)?;
             }
-            ast::Stmt::Print(expr) => {
+            ast::StmtKind::Print(expr) => {
                 println!("[out] {:?}", self.eval_expression(expr)?);
             }
-            ast::Stmt::IfElse(cond, body, else_body) => {
+            ast::StmtKind::IfElse(cond, body, else_body) => {
                 self.eval_if_else(cond, body, else_body.as_deref())?
             }
-            ast::Stmt::While(cond, body) => self.eval_while(cond, body)?,
-            ast::Stmt::VariableDecl(name, expr) => {
+            ast::StmtKind::While(cond, body) => self.eval_while(cond, body)?,
+            ast::StmtKind::VariableDecl(name, expr) => {
                 let value = self.eval_expression(expr)?;
                 self.env.define(name.clone(), value);
             }
-            ast::Stmt::Block(stmts) => self.eval_block(stmts)?,
-            ast::Stmt::FunctionDecl(fn_data) => {
+            ast::StmtKind::Block(stmts) => self.eval_block(stmts)?,
+            ast::StmtKind::FunctionDecl(fn_data) => {
                 self.env.define(
                     fn_data.name.clone(),
                     Object::LoxFunction(self.make_fn_ptr(fn_data, false)),
                 );
             }
-            ast::Stmt::Return(expr) => {
+            ast::StmtKind::Return(expr) => {
                 let value = match expr {
                     Some(expr) => self.eval_expression(expr)?,
                     None => Object::Nil,
                 };
                 return Err(Error::Return(value));
             }
-            ast::Stmt::ClassDecl(name, superclass_name, method_defs) => {
+            ast::StmtKind::ClassDecl(name, superclass_name, method_defs) => {
                 // Look up the super class
                 let superclass_cls = match superclass_name {
                     None => None,
@@ -152,13 +152,13 @@ impl Interpreter {
     }
 
     fn eval_expression(&mut self, expr: &ast::Expr) -> RuntimeResult<Object> {
-        match expr {
-            ast::Expr::Literal(lit) => Ok(self.eval_literal(lit)),
-            ast::Expr::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
-            ast::Expr::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
-            ast::Expr::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
-            ast::Expr::Variable(var) => self.lookup_local_var(var),
-            ast::Expr::Assignment(var, expr) => {
+        match &expr.kind {
+            ast::ExprKind::Literal(lit) => Ok(self.eval_literal(lit)),
+            ast::ExprKind::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
+            ast::ExprKind::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
+            ast::ExprKind::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
+            ast::ExprKind::Variable(var) => self.lookup_local_var(var),
+            ast::ExprKind::Assignment(var, expr) => {
                 let value = self.eval_expression(expr)?;
                 match var.hops {
                     Some(hops) => self.env.set_at(hops, &var.name, value.clone())?,
@@ -166,13 +166,13 @@ impl Interpreter {
                 }
                 Ok(value)
             }
-            ast::Expr::Call(callee, args) => self.eval_function_call(callee, args),
-            ast::Expr::Get(subexpr, property) => self.eval_property_access(subexpr, property),
-            ast::Expr::Set(subexpr, property, value) => {
+            ast::ExprKind::Call(callee, args) => self.eval_function_call(callee, args),
+            ast::ExprKind::Get(subexpr, property) => self.eval_property_access(subexpr, property),
+            ast::ExprKind::Set(subexpr, property, value) => {
                 self.eval_property_mutation(subexpr, property, value)
             }
-            ast::Expr::This(var) => self.lookup_local_var(var),
-            ast::Expr::Super(var, method_name) => {
+            ast::ExprKind::This(var) => self.lookup_local_var(var),
+            ast::ExprKind::Super(var, method_name) => {
                 // This one's frisky. We need to look up the method in the superclass,
                 // and bind it to the instance object.
                 let superclass = match self.lookup_local_var(var)? {

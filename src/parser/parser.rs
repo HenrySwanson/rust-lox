@@ -1,7 +1,7 @@
 use crate::common::ast;
 use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
-use crate::common::span::CodePosition;
+use crate::common::span::{CodePosition, Span};
 use crate::common::token::{SpannedToken, Token};
 use std::iter::Peekable;
 
@@ -10,6 +10,7 @@ where
     T: Iterator<Item = SpannedToken>,
 {
     tokens: Peekable<T>,
+    prev_span: Span,
 }
 
 #[derive(Debug)]
@@ -30,6 +31,7 @@ where
     pub fn new(tokens: T) -> Self {
         Parser {
             tokens: tokens.peekable(),
+            prev_span: Span::dummy(),
         }
     }
 
@@ -46,7 +48,10 @@ where
     /// Returns the current token and advances the stream
     fn take_token(&mut self) -> SpannedToken {
         match self.tokens.next() {
-            Some(t) => t,
+            Some(t) => {
+                self.prev_span = t.span;
+                t
+            }
             None => panic!("Went beyond EOF"),
         }
     }
@@ -86,6 +91,10 @@ where
         }
     }
 
+    fn current_span(&mut self) -> Span {
+        self.peek_token().span
+    }
+
     // ---- parsing methods ----
 
     pub fn parse_all(mut self) -> Vec<ParseResult<ast::Stmt>> {
@@ -102,6 +111,8 @@ where
 
     fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
         let token = self.peek_token();
+        let lo = token.span;
+
         match token.token {
             Token::Var => {
                 self.bump();
@@ -109,15 +120,21 @@ where
                 let expr = if self.try_eat(Token::Equals) {
                     self.parse_expression()?
                 } else {
-                    from_lit(ast::Literal::Nil)
+                    mk_expr(from_lit(ast::Literal::Nil), Span::dummy())
                 };
                 self.eat(Token::Semicolon)?;
 
-                Ok(ast::Stmt::VariableDecl(name, expr))
+                Ok(mk_stmt(
+                    ast::StmtKind::VariableDecl(name, expr),
+                    lo.to(self.prev_span),
+                ))
             }
             Token::Fun => {
                 let fn_data = self.parse_function_data(true)?;
-                Ok(ast::Stmt::FunctionDecl(fn_data))
+                Ok(mk_stmt(
+                    ast::StmtKind::FunctionDecl(fn_data),
+                    lo.to(self.prev_span),
+                ))
             }
             Token::Class => self.parse_class_decl(),
             _ => self.parse_statement(),
@@ -137,6 +154,8 @@ where
     }
 
     fn parse_class_decl(&mut self) -> ParseResult<ast::Stmt> {
+        let lo = self.current_span();
+
         self.eat(Token::Class)?;
         let name = self.parse_identifier()?;
 
@@ -154,17 +173,22 @@ where
             methods.push(method_data);
         }
 
-        Ok(ast::Stmt::ClassDecl(name, superclass, methods))
+        Ok(mk_stmt(
+            ast::StmtKind::ClassDecl(name, superclass, methods),
+            lo.to(self.prev_span),
+        ))
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
         let token = self.peek_token();
+        let lo = token.span;
+
         match token.token {
             Token::Print => {
                 self.bump();
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
-                Ok(ast::Stmt::Print(expr))
+                Ok(mk_stmt(ast::StmtKind::Print(expr), lo.to(self.prev_span)))
             }
             Token::If => self.parse_if_else_statement(),
             Token::While => self.parse_while_statement(),
@@ -174,12 +198,17 @@ where
             _ => {
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
-                Ok(ast::Stmt::Expression(expr))
+                Ok(mk_stmt(
+                    ast::StmtKind::Expression(expr),
+                    lo.to(self.prev_span),
+                ))
             }
         }
     }
 
     fn parse_if_else_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let lo = self.current_span();
+
         self.eat(Token::If)?;
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
@@ -192,10 +221,15 @@ where
             None
         };
 
-        Ok(ast::Stmt::IfElse(condition, body, else_body))
+        Ok(mk_stmt(
+            ast::StmtKind::IfElse(condition, body, else_body),
+            lo.to(self.prev_span),
+        ))
     }
 
     fn parse_while_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let lo = self.current_span();
+
         self.eat(Token::While)?;
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
@@ -203,10 +237,16 @@ where
 
         let body = self.parse_statement()?;
 
-        Ok(ast::Stmt::While(condition, Box::new(body)))
+        Ok(mk_stmt(
+            ast::StmtKind::While(condition, Box::new(body)),
+            lo.to(self.prev_span),
+        ))
     }
 
     fn parse_for_statement(&mut self) -> ParseResult<ast::Stmt> {
+        // TODO: this one's harder
+        let lo = self.current_span();
+
         self.eat(Token::For)?;
         self.eat(Token::LeftParen)?;
 
@@ -216,13 +256,17 @@ where
         } else if self.check(Token::Var) {
             Some(self.parse_declaration()?)
         } else {
+            let lo = self.current_span();
             let expr = self.parse_expression()?;
             self.eat(Token::Semicolon)?;
-            Some(ast::Stmt::Expression(expr))
+            Some(mk_stmt(
+                ast::StmtKind::Expression(expr),
+                lo.to(self.prev_span),
+            ))
         };
 
         let condition = if self.check(Token::Semicolon) {
-            from_lit(ast::Literal::Boolean(true))
+            mk_expr(from_lit(ast::Literal::Boolean(true)), Span::dummy())
         } else {
             self.parse_expression()?
         };
@@ -239,18 +283,31 @@ where
         // the for-loop.
         let mut body = self.parse_statement()?;
 
+        // Should I use dummy spans here, or try to build reasonable approximations?
         if let Some(increment) = increment {
-            body = ast::Stmt::Block(vec![body, ast::Stmt::Expression(increment)]);
+            let increment_stmt = mk_stmt(ast::StmtKind::Expression(increment), Span::dummy());
+            body = mk_stmt(
+                ast::StmtKind::Block(vec![body, increment_stmt]),
+                Span::dummy(),
+            );
         }
-        body = ast::Stmt::While(condition, Box::new(body));
+        body = mk_stmt(
+            ast::StmtKind::While(condition, Box::new(body)),
+            Span::dummy(),
+        );
         if let Some(initializer) = initializer {
-            body = ast::Stmt::Block(vec![initializer, body]);
+            body = mk_stmt(
+                ast::StmtKind::Block(vec![initializer, body]),
+                lo.to(self.prev_span),
+            );
         }
 
         Ok(body)
     }
 
     fn parse_return_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let lo = self.current_span();
+
         self.eat(Token::Return)?;
         let expr = if !self.check(Token::Semicolon) {
             Some(self.parse_expression()?)
@@ -259,10 +316,12 @@ where
         };
 
         self.eat(Token::Semicolon)?;
-        Ok(ast::Stmt::Return(expr))
+        Ok(mk_stmt(ast::StmtKind::Return(expr), lo.to(self.prev_span)))
     }
 
     fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
+        let lo = self.current_span();
+
         let mut stmts = vec![];
 
         self.eat(Token::LeftBrace)?;
@@ -270,7 +329,8 @@ where
             stmts.push(self.parse_declaration()?);
         }
 
-        Ok(ast::Stmt::Block(stmts))
+        // TODO replace mk_stmt with with_span
+        Ok(mk_stmt(ast::StmtKind::Block(stmts), lo.to(self.prev_span)))
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
@@ -280,46 +340,24 @@ where
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, taking care of prefix expressions
-        let SpannedToken { token, span } = self.take_token();
+        let SpannedToken { token, span } = self.peek_token();
 
         // Check if it's a prefix expression
         let mut lhs = match PrefixOperator::try_from_token(&token) {
             Some(op) => {
+                self.bump();
                 let expr = self.pratt_parse(op.precedence())?;
-                ast::Expr::Prefix(op, Box::new(expr))
+                mk_expr(
+                    ast::ExprKind::Prefix(op, Box::new(expr)),
+                    span.to(self.prev_span),
+                )
             }
-            None => match token {
-                // Literals
-                Token::Number(n) => from_lit(ast::Literal::Number(n)),
-                Token::True => from_lit(ast::Literal::Boolean(true)),
-                Token::False => from_lit(ast::Literal::Boolean(false)),
-                Token::String(s) => from_lit(ast::Literal::Str(s)),
-                Token::Nil => from_lit(ast::Literal::Nil),
-                // Other things
-                Token::Identifier(name) => ast::Expr::Variable(ast::VariableRef::new(name)),
-                Token::This => {
-                    let var = ast::VariableRef::new(THIS_STR.to_owned());
-                    ast::Expr::This(var)
-                }
-                Token::Super => {
-                    let var = ast::VariableRef::new(SUPER_STR.to_owned());
-                    self.eat(Token::Dot)?;
-                    let method_name = self.parse_identifier()?;
-                    ast::Expr::Super(var, method_name)
-                }
-                // Parentheses
-                Token::LeftParen => {
-                    let expr = self.parse_expression()?;
-                    self.eat(Token::RightParen)?;
-                    expr
-                }
-                t => return Err(Error::ExpectedExprAt(span.lo, t)),
-            },
+            None => self.parse_primary()?,
         };
 
         // Now we start consuming infix operators
         loop {
-            let SpannedToken { token, span } = self.peek_token();
+            let token = self.peek_token().token;
 
             // Is it an infix operator?
             if let Some(op) = InfixOperator::try_from_token(&token) {
@@ -332,7 +370,11 @@ where
                 // Grab the operator and rhs and fold them into the new lhs
                 self.bump();
                 let rhs = self.pratt_parse(op.precedence())?;
-                lhs = ast::Expr::Infix(op, Box::new(lhs), Box::new(rhs));
+                let new_span = lhs.span.to(rhs.span);
+                lhs = mk_expr(
+                    ast::ExprKind::Infix(op, Box::new(lhs), Box::new(rhs)),
+                    new_span,
+                );
                 continue;
             }
 
@@ -345,7 +387,11 @@ where
 
                 self.bump();
                 let rhs = self.pratt_parse(op.precedence())?;
-                lhs = ast::Expr::Logical(op, Box::new(lhs), Box::new(rhs));
+                let new_span = lhs.span.to(rhs.span);
+                lhs = mk_expr(
+                    ast::ExprKind::Logical(op, Box::new(lhs), Box::new(rhs)),
+                    new_span,
+                );
                 continue;
             }
 
@@ -359,17 +405,20 @@ where
                 // Grab the operator and parse the RHS
                 self.bump();
                 let rhs = self.pratt_parse(Precedence::Assignment)?;
+                let new_span = lhs.span.to(rhs.span);
                 let rhs_box = Box::new(rhs);
 
                 // The LHS must be converted to the appropriate format
-                let temp = match lhs {
-                    ast::Expr::Variable(var) => {
-                        ast::Expr::Assignment(ast::VariableRef::new(var.name), rhs_box)
+                let new_kind = match lhs.kind {
+                    ast::ExprKind::Variable(var) => {
+                        ast::ExprKind::Assignment(ast::VariableRef::new(var.name), rhs_box)
                     }
-                    ast::Expr::Get(expr, property) => ast::Expr::Set(expr, property, rhs_box),
+                    ast::ExprKind::Get(expr, property) => {
+                        ast::ExprKind::Set(expr, property, rhs_box)
+                    }
                     _ => return Err(Error::ExpectedLValue(span.lo)),
                 };
-                lhs = temp; // temp needed to appease the borrow checker
+                lhs = mk_expr(new_kind, new_span);
                 continue;
             }
 
@@ -382,8 +431,9 @@ where
 
                 // Don't parse the parentheses, it'll get consumed by this function
                 let arguments = self.parse_fn_args()?;
+                let span = lhs.span.to(self.prev_span);
 
-                lhs = ast::Expr::Call(Box::new(lhs), arguments);
+                lhs = mk_expr(ast::ExprKind::Call(Box::new(lhs), arguments), span);
                 continue;
             }
 
@@ -399,7 +449,9 @@ where
 
                 // The RHS must be an identifier
                 let rhs = self.parse_identifier()?;
-                lhs = ast::Expr::Get(Box::new(lhs), rhs);
+                let span = lhs.span.to(self.prev_span);
+
+                lhs = mk_expr(ast::ExprKind::Get(Box::new(lhs), rhs), span);
                 continue;
             }
 
@@ -407,6 +459,40 @@ where
         }
 
         Ok(lhs)
+    }
+
+    fn parse_primary(&mut self) -> ParseResult<ast::Expr> {
+        let token = self.take_token();
+        let lo = token.span;
+
+        let expr_kind = match token.token {
+            // Literals
+            Token::Number(n) => from_lit(ast::Literal::Number(n)),
+            Token::True => from_lit(ast::Literal::Boolean(true)),
+            Token::False => from_lit(ast::Literal::Boolean(false)),
+            Token::String(s) => from_lit(ast::Literal::Str(s)),
+            Token::Nil => from_lit(ast::Literal::Nil),
+            // Other things
+            Token::Identifier(name) => ast::ExprKind::Variable(ast::VariableRef::new(name)),
+            Token::This => {
+                let var = ast::VariableRef::new(THIS_STR.to_owned());
+                ast::ExprKind::This(var)
+            }
+            Token::Super => {
+                let var = ast::VariableRef::new(SUPER_STR.to_owned());
+                self.eat(Token::Dot)?;
+                let method_name = self.parse_identifier()?;
+                ast::ExprKind::Super(var, method_name)
+            }
+            // Parentheses
+            Token::LeftParen => {
+                let expr = self.parse_expression()?;
+                self.eat(Token::RightParen)?;
+                return Ok(expr);
+            }
+            t => return Err(Error::ExpectedExprAt(lo.lo, t)),
+        };
+        Ok(mk_expr(expr_kind, lo.to(self.prev_span)))
     }
 
     fn parse_identifier(&mut self) -> ParseResult<String> {
@@ -436,7 +522,7 @@ where
 
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.peek_token().span;
+            let span = self.current_span();
             return Err(Error::TooManyArgs(span.lo));
         }
 
@@ -462,7 +548,7 @@ where
 
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.peek_token().span;
+            let span = self.current_span();
             return Err(Error::TooManyArgs(span.lo));
         }
 
@@ -470,8 +556,16 @@ where
     }
 }
 
-fn from_lit(lit: ast::Literal) -> ast::Expr {
-    ast::Expr::Literal(lit)
+fn from_lit(lit: ast::Literal) -> ast::ExprKind {
+    ast::ExprKind::Literal(lit)
+}
+
+fn mk_stmt(kind: ast::StmtKind, span: Span) -> ast::Stmt {
+    ast::Stmt::new(kind, span)
+}
+
+fn mk_expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
+    ast::Expr::new(kind, span)
 }
 
 #[cfg(test)]
@@ -497,42 +591,42 @@ mod tests {
 
         assert_eq!(
             parse_expression("3+4"),
-            Expr::Infix(
+            ExprKind::Infix(
                 InfixOperator::Add,
-                Box::new(Expr::Literal(Literal::Number(3))),
-                Box::new(Expr::Literal(Literal::Number(4)))
+                Box::new(ExprKind::Literal(Literal::Number(3))),
+                Box::new(ExprKind::Literal(Literal::Number(4)))
             )
         );
 
         assert_eq!(
             parse_expression("3 + 1 * 5 - 4"),
-            Expr::Infix(
+            ExprKind::Infix(
                 InfixOperator::Subtract,
-                Box::new(Expr::Infix(
+                Box::new(ExprKind::Infix(
                     InfixOperator::Add,
-                    Box::new(Expr::Literal(Literal::Number(3))),
-                    Box::new(Expr::Infix(
+                    Box::new(ExprKind::Literal(Literal::Number(3))),
+                    Box::new(ExprKind::Infix(
                         InfixOperator::Multiply,
-                        Box::new(Expr::Literal(Literal::Number(1))),
-                        Box::new(Expr::Literal(Literal::Number(5)))
+                        Box::new(ExprKind::Literal(Literal::Number(1))),
+                        Box::new(ExprKind::Literal(Literal::Number(5)))
                     ))
                 )),
-                Box::new(Expr::Literal(Literal::Number(4)))
+                Box::new(ExprKind::Literal(Literal::Number(4)))
             )
         );
 
         assert_eq!(
             parse_expression("-3 * (1 + 2)"),
-            Expr::Infix(
+            ExprKind::Infix(
                 InfixOperator::Multiply,
-                Box::new(Expr::Prefix(
+                Box::new(ExprKind::Prefix(
                     PrefixOperator::Negate,
-                    Box::new(Expr::Literal(Literal::Number(3)))
+                    Box::new(ExprKind::Literal(Literal::Number(3)))
                 )),
-                Box::new(Expr::Infix(
+                Box::new(ExprKind::Infix(
                     InfixOperator::Add,
-                    Box::new(Expr::Literal(Literal::Number(1))),
-                    Box::new(Expr::Literal(Literal::Number(2)))
+                    Box::new(ExprKind::Literal(Literal::Number(1))),
+                    Box::new(ExprKind::Literal(Literal::Number(2)))
                 ))
             )
         );

@@ -60,10 +60,10 @@ impl Resolver {
     }
 
     fn resolve_statement(&mut self, stmt: &mut ast::Stmt) -> ResolveResult<()> {
-        match stmt {
-            ast::Stmt::Expression(expr) => self.resolve_expression(expr)?,
-            ast::Stmt::Print(expr) => self.resolve_expression(expr)?,
-            ast::Stmt::VariableDecl(name, expr) => {
+        match &mut stmt.kind {
+            ast::StmtKind::Expression(expr) => self.resolve_expression(expr)?,
+            ast::StmtKind::Print(expr) => self.resolve_expression(expr)?,
+            ast::StmtKind::VariableDecl(name, expr) => {
                 // Declare, resolve, define
                 if self.is_already_defined(&name) {
                     return Err(Error::RedefineLocalVar(name.to_owned()));
@@ -73,28 +73,28 @@ impl Resolver {
                 self.resolve_expression(expr)?;
                 self.define(name);
             }
-            ast::Stmt::Block(stmts) => {
+            ast::StmtKind::Block(stmts) => {
                 self.push_scope();
                 for stmt in stmts.iter_mut() {
                     self.resolve_statement(stmt)?;
                 }
                 self.pop_scope();
             }
-            ast::Stmt::IfElse(cond, body, else_body) => {
+            ast::StmtKind::IfElse(cond, body, else_body) => {
                 self.resolve_expression(cond)?;
                 self.resolve_statement(body)?;
                 if let Some(else_body) = else_body {
                     self.resolve_statement(else_body)?
                 }
             }
-            ast::Stmt::While(cond, body) => {
+            ast::StmtKind::While(cond, body) => {
                 self.resolve_expression(cond)?;
                 self.resolve_statement(body)?;
             }
-            ast::Stmt::FunctionDecl(fn_data) => {
+            ast::StmtKind::FunctionDecl(fn_data) => {
                 self.resolve_function(fn_data, FunctionContext::Function)?
             }
-            ast::Stmt::Return(expr) => {
+            ast::StmtKind::Return(expr) => {
                 if self.function_ctx == FunctionContext::Global {
                     return Err(Error::ReturnAtTopLevel);
                 }
@@ -107,7 +107,7 @@ impl Resolver {
                     self.resolve_expression(expr)?;
                 }
             }
-            ast::Stmt::ClassDecl(name, superclass, methods) => {
+            ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 // Define the class in the current scope
                 self.define(&name);
 
@@ -159,48 +159,48 @@ impl Resolver {
     }
 
     fn resolve_expression(&mut self, expr: &mut ast::Expr) -> ResolveResult<()> {
-        match expr {
-            ast::Expr::Literal(_) => (),
-            ast::Expr::Infix(_, lhs, rhs) => {
+        match &mut expr.kind {
+            ast::ExprKind::Literal(_) => (),
+            ast::ExprKind::Infix(_, lhs, rhs) => {
                 self.resolve_expression(lhs)?;
                 self.resolve_expression(rhs)?;
             }
-            ast::Expr::Prefix(_, subexpr) => self.resolve_expression(subexpr)?,
-            ast::Expr::Logical(_, lhs, rhs) => {
+            ast::ExprKind::Prefix(_, subexpr) => self.resolve_expression(subexpr)?,
+            ast::ExprKind::Logical(_, lhs, rhs) => {
                 self.resolve_expression(lhs)?;
                 self.resolve_expression(rhs)?;
             }
-            ast::Expr::Variable(var) => {
+            ast::ExprKind::Variable(var) => {
                 // Check if we're in the middle of initializing ourselves
                 if self.is_during_initializer(&var.name) {
                     return Err(Error::UsedInOwnInitializer(var.name.to_owned()));
                 }
                 self.resolve_local_variable(var);
             }
-            ast::Expr::Assignment(var, subexpr) => {
+            ast::ExprKind::Assignment(var, subexpr) => {
                 self.resolve_expression(subexpr)?;
                 self.resolve_local_variable(var);
             }
-            ast::Expr::Call(callee, arg_exprs) => {
+            ast::ExprKind::Call(callee, arg_exprs) => {
                 self.resolve_expression(callee)?;
                 for a in arg_exprs.iter_mut() {
                     self.resolve_expression(a)?;
                 }
             }
-            ast::Expr::Get(subexpr, _) => {
+            ast::ExprKind::Get(subexpr, _) => {
                 self.resolve_expression(subexpr)?;
             }
-            ast::Expr::Set(subexpr, _, value) => {
+            ast::ExprKind::Set(subexpr, _, value) => {
                 self.resolve_expression(subexpr)?;
                 self.resolve_expression(value)?;
             }
-            ast::Expr::This(var) => {
+            ast::ExprKind::This(var) => {
                 if self.class_ctx == ClassContext::Global {
                     return Err(Error::ThisOutsideClass);
                 }
                 self.resolve_local_variable(var);
             }
-            ast::Expr::Super(var, _) => {
+            ast::ExprKind::Super(var, _) => {
                 if self.class_ctx != ClassContext::Subclass {
                     return Err(Error::SuperOutsideSubclass);
                 }

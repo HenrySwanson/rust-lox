@@ -1,7 +1,17 @@
 use super::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
+use crate::common::span::Span;
+
+// AST Nodes
+
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Stmt {
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum StmtKind {
     Expression(Expr),
     Print(Expr),
     VariableDecl(String, Expr),
@@ -14,7 +24,13 @@ pub enum Stmt {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ExprKind {
     Literal(Literal),
     Infix(InfixOperator, Box<Expr>, Box<Expr>),
     Prefix(PrefixOperator, Box<Expr>),
@@ -49,45 +65,59 @@ pub struct FunctionData {
     pub body: Box<Stmt>,
 }
 
+impl Stmt {
+    pub fn new(kind: StmtKind, span: Span) -> Self {
+        Stmt { kind, span }
+    }
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
+        Expr { kind, span }
+    }
+}
+
 impl Expr {
     /// Returns a pretty-formatted string to show the AST. Uses a Lisp-like format,
     /// with a lot of parentheses.
     pub fn lispy_string(&self) -> String {
-        match self {
-            Expr::Literal(lit) => match lit {
+        match &self.kind {
+            ExprKind::Literal(lit) => match lit {
                 Literal::Number(n) => n.to_string(),
                 Literal::Boolean(b) => b.to_string(),
                 Literal::Str(s) => format!("\"{}\"", s),
                 Literal::Nil => "nil".to_owned(),
             },
-            Expr::Infix(op, lhs, rhs) => format!(
+            ExprKind::Infix(op, lhs, rhs) => format!(
                 "({} {} {})",
                 op.symbol(),
                 lhs.lispy_string(),
                 rhs.lispy_string()
             ),
-            Expr::Prefix(op, expr) => format!("({} {})", op.symbol(), expr.lispy_string()),
-            Expr::Logical(op, lhs, rhs) => format!(
+            ExprKind::Prefix(op, expr) => format!("({} {})", op.symbol(), expr.lispy_string()),
+            ExprKind::Logical(op, lhs, rhs) => format!(
                 "({} {} {})",
                 op.symbol(),
                 lhs.lispy_string(),
                 rhs.lispy_string()
             ),
-            Expr::Variable(var) => var.name.clone(),
-            Expr::Assignment(var, expr) => format!("(set {} {})", var.name, expr.lispy_string()),
-            Expr::Call(callee, args) => {
+            ExprKind::Variable(var) => var.name.clone(),
+            ExprKind::Assignment(var, expr) => {
+                format!("(set {} {})", var.name, expr.lispy_string())
+            }
+            ExprKind::Call(callee, args) => {
                 let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();
                 format!("(call {} {})", callee.lispy_string(), exprs.join(" "))
             }
-            Expr::Get(expr, property) => format!("(get {} {})", expr.lispy_string(), property),
-            Expr::Set(expr, property, value) => format!(
+            ExprKind::Get(expr, property) => format!("(get {} {})", expr.lispy_string(), property),
+            ExprKind::Set(expr, property, value) => format!(
                 "(set {} {} {})",
                 expr.lispy_string(),
                 property,
                 value.lispy_string()
             ),
-            Expr::This(_) => String::from("this"),
-            Expr::Super(_, method_name) => format!("(super {})", method_name),
+            ExprKind::This(_) => String::from("this"),
+            ExprKind::Super(_, method_name) => format!("(super {})", method_name),
         }
     }
 }

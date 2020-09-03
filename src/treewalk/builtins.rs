@@ -5,10 +5,6 @@ use super::object::Object;
 use std::fmt;
 use std::rc::Rc;
 
-/// Since we can't derive Eq on function pointers, and LLVM can do funny things
-/// under the hood, we require that every built-in have a distinct name.
-/// We have total control over the created built-ins, so this is achievable.
-
 type FnType = fn(Vec<Object>, &mut Interpreter) -> RuntimeResult<Object>;
 
 struct BuiltInFnData {

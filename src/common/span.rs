@@ -35,6 +35,11 @@ impl Span {
         Span { lo, hi }
     }
 
+    pub fn dummy() -> Self {
+        let zero_pos = CodePosition::new(0, 0);
+        Span::new(zero_pos, zero_pos)
+    }
+
     pub fn to(&self, other: Self) -> Self {
         Span::new(
             std::cmp::min(self.lo, other.lo),
