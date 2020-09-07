@@ -80,6 +80,7 @@ impl Expr {
 impl Expr {
     /// Returns a pretty-formatted string to show the AST. Uses a Lisp-like format,
     /// with a lot of parentheses.
+    #[allow(dead_code)]
     pub fn lispy_string(&self) -> String {
         match &self.kind {
             ExprKind::Literal(lit) => match lit {

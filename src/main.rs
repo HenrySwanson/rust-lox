@@ -13,18 +13,37 @@ mod treewalk;
 type RunResult = Result<(), String>;
 
 fn main() {
-    use bytecode::{Chunk, OpCode};
+    use bytecode::{Chunk, OpCode, VM};
     let mut chunk = Chunk::new();
 
-    let idx = chunk.add_constant(12);
+    let c1 = chunk.add_constant(12);
+    let c2 = chunk.add_constant(34);
+    let c3 = chunk.add_constant(2);
+
     chunk.write_instruction(OpCode::Constant, 123);
-    chunk.write_byte(idx, 123);
+    chunk.write_byte(c1, 123);
+
+    chunk.write_instruction(OpCode::Constant, 123);
+    chunk.write_byte(c2, 123);
+
+    chunk.write_instruction(OpCode::Add, 123);
+
+    chunk.write_instruction(OpCode::Constant, 123);
+    chunk.write_byte(c3, 123);
+
+    chunk.write_instruction(OpCode::Divide, 123);
+    chunk.write_instruction(OpCode::Negate, 123);
 
     chunk.write_instruction(OpCode::Return, 123);
-    chunk.disassemble("test chunk");
+
+    match VM::new().interpret(&chunk) {
+        Ok(_) => (),
+        Err(e) => println!("Error: {:?}", e),
+    }
 }
 
 // TODO restore to main
+#[allow(dead_code)]
 fn main_() {
     let args: Vec<String> = env::args().collect();
 
