@@ -208,37 +208,7 @@ impl Interpreter {
     ) -> RuntimeResult<Object> {
         let lhs = self.eval_expression(lhs)?;
         let rhs = self.eval_expression(rhs)?;
-
-        match op {
-            InfixOperator::Add => match (lhs, rhs) {
-                (Object::Number(a), Object::Number(b)) => Ok(Object::Number(a + b)),
-                (Object::String(s), Object::String(t)) => Ok(Object::String(s + &t)),
-                (lhs, rhs) => Err(Error::IllegalInfixOperation(op, lhs, rhs)),
-            },
-            InfixOperator::Subtract => numerical_binop(op, lhs, rhs, |a, b| Object::Number(a - b)),
-            InfixOperator::Multiply => numerical_binop(op, lhs, rhs, |a, b| Object::Number(a * b)),
-            // Division is special to avoid div by zero panic
-            InfixOperator::Divide => match (lhs, rhs) {
-                (Object::Number(a), Object::Number(b)) => {
-                    if b != 0 {
-                        Ok(Object::Number(a / b))
-                    } else {
-                        Err(Error::DivideByZero)
-                    }
-                }
-                (lhs, rhs) => Err(Error::IllegalInfixOperation(op, lhs, rhs)),
-            },
-            InfixOperator::EqualTo => Ok(Object::Boolean(lhs == rhs)),
-            InfixOperator::NotEqualTo => Ok(Object::Boolean(lhs != rhs)),
-            InfixOperator::GreaterThan => {
-                numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a > b))
-            }
-            InfixOperator::GreaterEq => {
-                numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a >= b))
-            }
-            InfixOperator::LessThan => numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a < b)),
-            InfixOperator::LessEq => numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a <= b)),
-        }
+        Object::apply_infix_op(op, lhs, rhs)
     }
 
     fn eval_prefix_operator(
@@ -247,14 +217,7 @@ impl Interpreter {
         expr: &ast::Expr,
     ) -> RuntimeResult<Object> {
         let value = self.eval_expression(expr)?;
-
-        match op {
-            PrefixOperator::Negate => match value {
-                Object::Number(n) => Ok(Object::Number(-n)),
-                _ => Err(Error::IllegalPrefixOperation(op, value)),
-            },
-            PrefixOperator::LogicalNot => Ok(Object::Boolean(!value.is_truthy())),
-        }
+        Object::apply_prefix_op(op, value)
     }
 
     fn eval_logical_operator(
@@ -312,7 +275,7 @@ impl Interpreter {
 
     // ---- various helpers ----
 
-    fn make_fn_ptr(&self, fn_data: &ast::FunctionData, is_method: bool) -> LoxFunctionPtr {
+    fn make_fn_ptr(&self, fn_data: &ast::FunctionDecl, is_method: bool) -> LoxFunctionPtr {
         let is_initializer = is_method && fn_data.name == INIT_STR;
         LoxFunctionPtr::new(fn_data.clone(), is_initializer, self.env.clone())
     }
@@ -322,20 +285,5 @@ impl Interpreter {
             Some(hops) => self.env.get_at(hops, &var.name),
             None => self.globals.get(&var.name),
         }
-    }
-}
-
-fn numerical_binop<F>(
-    op: InfixOperator,
-    lhs: Object,
-    rhs: Object,
-    closure: F,
-) -> RuntimeResult<Object>
-where
-    F: Fn(i64, i64) -> Object,
-{
-    match (lhs, rhs) {
-        (Object::Number(a), Object::Number(b)) => Ok(closure(a, b)),
-        (lhs, rhs) => Err(Error::IllegalInfixOperation(op, lhs, rhs)),
     }
 }

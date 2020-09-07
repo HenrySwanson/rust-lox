@@ -18,9 +18,9 @@ pub enum StmtKind {
     Block(Vec<Stmt>),
     IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
-    FunctionDecl(FunctionData),
+    FunctionDecl(FunctionDecl),
     Return(Option<Expr>),
-    ClassDecl(String, Option<VariableRef>, Vec<FunctionData>),
+    ClassDecl(String, Option<VariableRef>, Vec<FunctionDecl>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -59,7 +59,7 @@ pub struct VariableRef {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct FunctionData {
+pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<String>,
     pub body: Box<Stmt>,
@@ -128,9 +128,9 @@ impl VariableRef {
     }
 }
 
-impl FunctionData {
+impl FunctionDecl {
     pub fn new(name: String, params: Vec<String>, body: Stmt) -> Self {
-        FunctionData {
+        FunctionDecl {
             name,
             params,
             body: Box::new(body),

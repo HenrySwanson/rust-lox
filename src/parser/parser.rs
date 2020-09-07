@@ -141,7 +141,7 @@ where
         }
     }
 
-    fn parse_function_data(&mut self, leading_fun: bool) -> ParseResult<ast::FunctionData> {
+    fn parse_function_data(&mut self, leading_fun: bool) -> ParseResult<ast::FunctionDecl> {
         if leading_fun {
             self.eat(Token::Fun)?;
         }
@@ -149,7 +149,7 @@ where
         let params = self.parse_fn_params()?;
         let body = self.parse_block_statement()?;
 
-        let fn_data = ast::FunctionData::new(name, params, body);
+        let fn_data = ast::FunctionDecl::new(name, params, body);
         Ok(fn_data)
     }
 

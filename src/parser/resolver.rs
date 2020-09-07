@@ -212,7 +212,7 @@ impl Resolver {
 
     fn resolve_function(
         &mut self,
-        fn_data: &mut ast::FunctionData,
+        fn_data: &mut ast::FunctionDecl,
         ctx: FunctionContext,
     ) -> ResolveResult<()> {
         // Define eagerly, so that the function can refer to itself recursively.

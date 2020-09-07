@@ -10,7 +10,7 @@ use std::fmt;
 use std::rc::Rc;
 
 struct LoxFunctionData {
-    fn_data: ast::FunctionData,
+    fn_data: ast::FunctionDecl,
     is_initializer: bool,
     closure: Environment,
 }
@@ -19,7 +19,7 @@ struct LoxFunctionData {
 pub struct LoxFunctionPtr(Rc<LoxFunctionData>);
 
 impl LoxFunctionPtr {
-    pub fn new(fn_data: ast::FunctionData, is_initializer: bool, closure: Environment) -> Self {
+    pub fn new(fn_data: ast::FunctionDecl, is_initializer: bool, closure: Environment) -> Self {
         let data = LoxFunctionData {
             fn_data,
             is_initializer,
