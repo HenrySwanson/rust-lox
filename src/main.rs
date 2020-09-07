@@ -4,6 +4,7 @@ use crate::treewalk::Interpreter;
 use io::Write;
 use std::{env, fs, io, process};
 
+mod bytecode;
 mod common;
 mod lexer;
 mod parser;
@@ -12,6 +13,19 @@ mod treewalk;
 type RunResult = Result<(), String>;
 
 fn main() {
+    use bytecode::{Chunk, OpCode};
+    let mut chunk = Chunk::new();
+
+    let idx = chunk.add_constant(12);
+    chunk.write_instruction(OpCode::Constant, 123);
+    chunk.write_byte(idx, 123);
+
+    chunk.write_instruction(OpCode::Return, 123);
+    chunk.disassemble("test chunk");
+}
+
+// TODO restore to main
+fn main_() {
     let args: Vec<String> = env::args().collect();
 
     match args.len() {
