@@ -1,7 +1,8 @@
-use super::opcode::OpCode;
 use std::convert::{TryFrom, TryInto};
 
-pub type Value = i64; // TODO should be f64, just like Token::Number et al
+use super::opcode::OpCode;
+use super::value::Value;
+
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
 pub struct Chunk {
@@ -35,7 +36,7 @@ impl Chunk {
     }
 
     pub fn read_constant(&self, idx: ConstantIdx) -> Value {
-        self.constants[idx as usize]
+        self.constants[idx as usize].clone()
     }
 
     // TODO: should this take a formatter???
@@ -71,13 +72,23 @@ impl Chunk {
             OpCode::Constant => {
                 let idx = self.code[offset + 1];
                 let constant = self.read_constant(idx);
-                println!("OP_CONSTANT {:4} {}", idx, constant);
+                println!("OP_CONSTANT {:4} {:?}", idx, constant);
             }
+            OpCode::True => println!("OP_TRUE"),
+            OpCode::False => println!("OP_FALSE"),
+            OpCode::Nil => println!("OP_NIL"),
+            // Arithmetic
             OpCode::Add => println!("OP_ADD"),
             OpCode::Subtract => println!("OP_SUBTRACT"),
             OpCode::Multiply => println!("OP_MULTIPLY"),
             OpCode::Divide => println!("OP_DIVIDE"),
             OpCode::Negate => println!("OP_NEGATE"),
+            // Logic
+            OpCode::Not => println!("OP_NOT"),
+            // Comparison
+            OpCode::Equal => println!("OP_EQUAL"),
+            OpCode::GreaterThan => println!("OP_GREATER"),
+            OpCode::LessThan => println!("OP_LESS"),
         };
         return offset + instruction.num_operands() + 1;
     }

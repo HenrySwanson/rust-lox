@@ -21,8 +21,7 @@ pub enum Object {
 impl Object {
     pub fn is_truthy(&self) -> bool {
         match self {
-            Object::Nil => false,
-            Object::Boolean(false) => false,
+            Object::Nil | Object::Boolean(false) => false,
             _ => true,
         }
     }

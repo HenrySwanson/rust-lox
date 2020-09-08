@@ -3,6 +3,7 @@ use crate::common::operator::{InfixOperator, PrefixOperator};
 
 use super::chunk::Chunk;
 use super::opcode::OpCode;
+use super::value::Value;
 
 const DEBUG_PRINT_CODE: bool = true;
 
@@ -37,33 +38,56 @@ impl Compiler {
     fn compile_literal(literal: &ast::Literal, line_no: usize, chunk: &mut Chunk) {
         match literal {
             ast::Literal::Number(n) => {
-                let c = chunk.add_constant(i64::from(*n));
+                let value = Value::Number((*n).into());
+                let idx = chunk.add_constant(value);
                 chunk.write_instruction(OpCode::Constant, line_no);
-                chunk.write_byte(c, line_no);
+                chunk.write_byte(idx, line_no);
             }
-            _ => panic!("Don't know how to compile that literal yet!"),
+            ast::Literal::Boolean(b) => {
+                let opcode = if *b { OpCode::True } else { OpCode::False };
+                chunk.write_instruction(opcode, line_no);
+            }
+            ast::Literal::Str(_) => panic!("Strings not implemented yet"),
+            ast::Literal::Nil => {
+                chunk.write_instruction(OpCode::Nil, line_no);
+            }
         }
     }
 
     fn compile_infix(op: InfixOperator, lhs: &ast::Expr, rhs: &ast::Expr, chunk: &mut Chunk) {
+        let line_no = lhs.span.hi.line_no; // I guess??
+
         Self::compile_expression(lhs, chunk);
         Self::compile_expression(rhs, chunk);
-        let opcode = match op {
-            InfixOperator::Add => OpCode::Add,
-            InfixOperator::Subtract => OpCode::Subtract,
-            InfixOperator::Multiply => OpCode::Multiply,
-            InfixOperator::Divide => OpCode::Divide,
-            _ => panic!("Don't know how to compile that infix op yet!"),
-        };
 
-        chunk.write_instruction(opcode, lhs.span.hi.line_no);
+        match op {
+            InfixOperator::Add => chunk.write_instruction(OpCode::Add, line_no),
+            InfixOperator::Subtract => chunk.write_instruction(OpCode::Subtract, line_no),
+            InfixOperator::Multiply => chunk.write_instruction(OpCode::Multiply, line_no),
+            InfixOperator::Divide => chunk.write_instruction(OpCode::Divide, line_no),
+            InfixOperator::EqualTo => chunk.write_instruction(OpCode::Equal, line_no),
+            InfixOperator::NotEqualTo => {
+                chunk.write_instruction(OpCode::Equal, line_no);
+                chunk.write_instruction(OpCode::Not, line_no)
+            }
+            InfixOperator::GreaterThan => chunk.write_instruction(OpCode::GreaterThan, line_no),
+            InfixOperator::GreaterEq => {
+                chunk.write_instruction(OpCode::LessThan, line_no);
+                chunk.write_instruction(OpCode::Not, line_no)
+            }
+            InfixOperator::LessThan => chunk.write_instruction(OpCode::LessThan, line_no),
+            InfixOperator::LessEq => {
+                chunk.write_instruction(OpCode::GreaterThan, line_no);
+                chunk.write_instruction(OpCode::Not, line_no)
+            }
+        }
     }
 
     fn compile_prefix(op: PrefixOperator, expr: &ast::Expr, chunk: &mut Chunk) {
         Self::compile_expression(expr, chunk);
         let opcode = match op {
             PrefixOperator::Negate => OpCode::Negate,
-            _ => panic!("Don't know how to compile that prefix op yet!"),
+            PrefixOperator::LogicalNot => OpCode::Not,
         };
 
         chunk.write_instruction(opcode, expr.span.lo.line_no);
