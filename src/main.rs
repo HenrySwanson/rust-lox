@@ -1,8 +1,12 @@
+use crate::bytecode::{Chunk, Compiler, VM};
 use crate::lexer::Lexer;
 use crate::parser::{Parser, Resolver};
 use crate::treewalk::Interpreter;
+
 use io::Write;
 use std::{env, fs, io, process};
+
+const USE_BYTECODE_INTERPRETER: bool = true;
 
 mod bytecode;
 mod common;
@@ -13,38 +17,6 @@ mod treewalk;
 type RunResult = Result<(), String>;
 
 fn main() {
-    use bytecode::{Chunk, OpCode, VM};
-    let mut chunk = Chunk::new();
-
-    let c1 = chunk.add_constant(12);
-    let c2 = chunk.add_constant(34);
-    let c3 = chunk.add_constant(2);
-
-    chunk.write_instruction(OpCode::Constant, 123);
-    chunk.write_byte(c1, 123);
-
-    chunk.write_instruction(OpCode::Constant, 123);
-    chunk.write_byte(c2, 123);
-
-    chunk.write_instruction(OpCode::Add, 123);
-
-    chunk.write_instruction(OpCode::Constant, 123);
-    chunk.write_byte(c3, 123);
-
-    chunk.write_instruction(OpCode::Divide, 123);
-    chunk.write_instruction(OpCode::Negate, 123);
-
-    chunk.write_instruction(OpCode::Return, 123);
-
-    match VM::new().interpret(&chunk) {
-        Ok(_) => (),
-        Err(e) => println!("Error: {:?}", e),
-    }
-}
-
-// TODO restore to main
-#[allow(dead_code)]
-fn main_() {
     let args: Vec<String> = env::args().collect();
 
     match args.len() {
@@ -124,19 +96,31 @@ fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
         Err(e) => return Err(format!("{:?}", e)),
     };
 
-    // Resolve variable references
-    let mut resolver = Resolver::new();
-    for s in statements.iter_mut() {
-        match resolver.resolve_root(s) {
-            Ok(_) => (),
-            Err(e) => return Err(format!("{:?}", e)),
-        }
-    }
+    if USE_BYTECODE_INTERPRETER {
+        // TODO: this is still very hacky
+        let mut bytecode = Chunk::new();
+        Compiler::compile(&statements[0], &mut bytecode);
 
-    // And evaluate the statements
-    match interpreter.eval_statements(statements) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("{:?}", e)),
+        let mut vm = VM::new();
+        match vm.interpret(&bytecode) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("{:?}", e)),
+        }
+    } else {
+        // Resolve variable references
+        let mut resolver = Resolver::new();
+        for s in statements.iter_mut() {
+            match resolver.resolve_root(s) {
+                Ok(_) => (),
+                Err(e) => return Err(format!("{:?}", e)),
+            }
+        }
+
+        // And evaluate the statements
+        match interpreter.eval_statements(statements) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("{:?}", e)),
+        }
     }
 }
 

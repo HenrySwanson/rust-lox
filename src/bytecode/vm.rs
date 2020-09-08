@@ -4,7 +4,7 @@ use super::opcode::OpCode;
 use std::convert::TryFrom;
 
 // TODO can this be converted into a build option?
-const DEBUG_TRACE_EXECUTION: bool = true;
+const DEBUG_TRACE_EXECUTION: bool = false;
 
 pub struct VM {
     stack: Vec<Value>,
