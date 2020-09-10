@@ -67,7 +67,19 @@ impl VM {
                 OpCode::False => self.push(Value::Boolean(false)),
                 OpCode::Nil => self.push(Value::Nil),
                 // Arithmetic
-                OpCode::Add => self.arithmetic_binop(|a, b| a + b)?,
+                OpCode::Add => {
+                    let lhs = self.peek(1)?;
+                    let rhs = self.peek(0)?;
+
+                    let new_object = match lhs.try_add(&rhs) {
+                        Some(obj) => obj,
+                        None => return Err(Error::IncorrectOperandType),
+                    };
+
+                    self.pop()?;
+                    self.pop()?;
+                    self.push(new_object);
+                }
                 OpCode::Subtract => self.arithmetic_binop(|a, b| a - b)?,
                 OpCode::Multiply => self.arithmetic_binop(|a, b| a * b)?,
                 OpCode::Divide => {

@@ -3,7 +3,7 @@ use crate::common::operator::{InfixOperator, PrefixOperator};
 
 use super::chunk::Chunk;
 use super::opcode::OpCode;
-use super::value::Value;
+use super::value::{Object, Value};
 
 const DEBUG_PRINT_CODE: bool = true;
 
@@ -47,7 +47,12 @@ impl Compiler {
                 let opcode = if *b { OpCode::True } else { OpCode::False };
                 chunk.write_instruction(opcode, line_no);
             }
-            ast::Literal::Str(_) => panic!("Strings not implemented yet"),
+            ast::Literal::Str(s) => {
+                let value = Value::make_heap_object(Object::String(s.clone()));
+                let idx = chunk.add_constant(value);
+                chunk.write_instruction(OpCode::Constant, line_no);
+                chunk.write_byte(idx, line_no);
+            }
             ast::Literal::Nil => {
                 chunk.write_instruction(OpCode::Nil, line_no);
             }
