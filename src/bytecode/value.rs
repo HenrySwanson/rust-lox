@@ -1,16 +1,16 @@
 use std::fmt;
-use std::ops::Deref;
-use std::rc::Rc;
+
+use super::gc::{GcPtr, Traceable};
 
 #[derive(Clone)]
 pub enum Value {
     Number(i64), // TODO should be f64, just like Token::Number et al
     Boolean(bool),
     Nil,
-    HeapObject(Rc<Object>),
+    Obj(GcPtr<HeapObject>),
 }
 
-pub enum Object {
+pub enum HeapObject {
     String(String),
 }
 
@@ -21,25 +21,6 @@ impl Value {
             _ => true,
         }
     }
-
-    pub fn make_heap_object(obj: Object) -> Self {
-        Value::HeapObject(Rc::new(obj))
-    }
-
-    pub fn try_add(&self, other: &Self) -> Option<Value> {
-        let obj = match (self, other) {
-            (Value::Number(n), Value::Number(m)) => Value::Number(n + m),
-            (Value::HeapObject(x), Value::HeapObject(y)) => match (x.deref(), y.deref()) {
-                (Object::String(s), Object::String(t)) => {
-                    let obj = Object::String(s.clone() + t);
-                    Value::make_heap_object(obj)
-                }
-            },
-            _ => return None,
-        };
-
-        Some(obj)
-    }
 }
 
 impl PartialEq<Value> for Value {
@@ -49,7 +30,7 @@ impl PartialEq<Value> for Value {
             (Number(n), Number(m)) => n == m,
             (Boolean(a), Boolean(b)) => a == b,
             (Nil, Nil) => true,
-            (HeapObject(x), HeapObject(y)) => x == y,
+            (Obj(x), Obj(y)) => x == y,
             _ => false,
         }
     }
@@ -63,25 +44,34 @@ impl fmt::Debug for Value {
             Value::Number(n) => n.fmt(f),
             Value::Boolean(b) => b.fmt(f),
             Value::Nil => write!(f, "nil"),
-            Value::HeapObject(obj) => write!(f, "(heap) {:?}", obj),
+            // TODO: make this not unsafe
+            Value::Obj(handle) => write!(f, "(heap) {:?}", unsafe { &*handle.raw_ptr }),
         }
     }
 }
 
-impl PartialEq<Object> for Object {
+impl PartialEq<HeapObject> for HeapObject {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Object::String(s), Object::String(t)) => s == t,
+            (HeapObject::String(s), HeapObject::String(t)) => s == t,
         }
     }
 }
 
-impl Eq for Object {}
+impl Eq for HeapObject {}
 
-impl fmt::Debug for Object {
+impl fmt::Debug for HeapObject {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Object::String(s) => write!(f, "\"{}\"", s),
+            HeapObject::String(s) => write!(f, "\"{}\"", s),
+        }
+    }
+}
+
+impl Traceable for HeapObject {
+    fn trace(&self) -> Vec<GcPtr<HeapObject>> {
+        match self {
+            HeapObject::String(_) => vec![],
         }
     }
 }

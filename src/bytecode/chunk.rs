@@ -1,7 +1,9 @@
 use std::convert::{TryFrom, TryInto};
 
+use super::gc::GcStrong;
 use super::opcode::OpCode;
-use super::value::Value;
+use super::value::{HeapObject, Value};
+use super::vm::VM;
 
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
@@ -9,6 +11,8 @@ pub struct Chunk {
     pub code: Vec<u8>,
     constants: Vec<Value>,
     line_nos: Vec<usize>,
+
+    constant_roots: Vec<GcStrong<HeapObject>>,
 }
 
 impl Chunk {
@@ -17,6 +21,7 @@ impl Chunk {
             code: vec![],
             constants: vec![],
             line_nos: vec![],
+            constant_roots: vec![],
         }
     }
 
@@ -33,6 +38,20 @@ impl Chunk {
         self.constants.push(constant);
         let idx = self.constants.len() - 1;
         idx.try_into().expect("Too many constants")
+    }
+
+    pub fn add_heap_constant(&mut self, obj: HeapObject, vm: &mut VM) -> ConstantIdx {
+        // Hand over ownership to the heap
+        let gc_handle = vm.push_to_heap(obj);
+
+        // Add it to the constant table like any other
+        let value = Value::Obj(gc_handle.downgrade());
+        let idx = self.add_constant(value);
+
+        // Stash the strong handle in the chunk, so it doesn't get garbage-collected
+        self.constant_roots.push(gc_handle);
+
+        return idx;
     }
 
     pub fn read_constant(&self, idx: ConstantIdx) -> Value {

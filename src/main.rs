@@ -97,11 +97,13 @@ fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
     };
 
     if USE_BYTECODE_INTERPRETER {
+        let mut vm = VM::new();
+        let mut compiler = Compiler::new(&mut vm);
+
         // TODO: this is still very hacky
         let mut bytecode = Chunk::new();
-        Compiler::compile(&statements[0], &mut bytecode);
+        compiler.compile(&statements[0], &mut bytecode);
 
-        let mut vm = VM::new();
         match vm.interpret(&bytecode) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("{:?}", e)),

@@ -2,19 +2,24 @@ use std::convert::TryFrom;
 
 use super::chunk::Chunk;
 use super::errs::{Error, VmResult};
+use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
-use super::value::Value;
+use super::value::{HeapObject, Value};
 
 // TODO can this be converted into a build option?
 const DEBUG_TRACE_EXECUTION: bool = false;
 
 pub struct VM {
     stack: Vec<Value>,
+    heap: GcHeap<HeapObject>,
 }
 
 impl VM {
     pub fn new() -> Self {
-        VM { stack: vec![] }
+        VM {
+            stack: vec![],
+            heap: GcHeap::new(),
+        }
     }
 
     fn push(&mut self, value: Value) {
@@ -31,6 +36,10 @@ impl VM {
             .get(stack_size - 1 - depth)
             .cloned()
             .ok_or(Error::InvalidStackIndex)
+    }
+
+    pub fn push_to_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
+        self.heap.insert(obj)
     }
 
     pub fn interpret(&mut self, chunk: &Chunk) -> VmResult<()> {
@@ -71,7 +80,7 @@ impl VM {
                     let lhs = self.peek(1)?;
                     let rhs = self.peek(0)?;
 
-                    let new_object = match lhs.try_add(&rhs) {
+                    let new_object = match self.try_add(lhs, rhs) {
                         Some(obj) => obj,
                         None => return Err(Error::IncorrectOperandType),
                     };
@@ -119,6 +128,27 @@ impl VM {
     }
 
     // ---- handy dandy helpers ----
+
+    pub fn try_add(&mut self, lhs: Value, rhs: Value) -> Option<Value> {
+        let value = match (lhs, rhs) {
+            (Value::Number(n), Value::Number(m)) => Value::Number(n + m),
+            (Value::Obj(x), Value::Obj(y)) => {
+                let lhs = self.heap.get_unchecked(&x);
+                let rhs = self.heap.get_unchecked(&y);
+
+                match (lhs, rhs) {
+                    (HeapObject::String(s), HeapObject::String(t)) => {
+                        let obj = HeapObject::String(s.clone() + t);
+                        let gc_handle = self.heap.insert(obj);
+                        Value::Obj(gc_handle.downgrade())
+                    }
+                }
+            }
+            _ => return None,
+        };
+
+        Some(value)
+    }
 
     fn numerical_binop<F>(&mut self, closure: F) -> VmResult<()>
     where

@@ -1,6 +1,7 @@
 mod chunk;
 mod compiler;
 mod errs;
+mod gc;
 mod opcode;
 mod value;
 mod vm;
