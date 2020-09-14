@@ -570,10 +570,8 @@ fn mk_expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::common::ast::{Expr, Literal};
-    use crate::common::operator::{InfixOperator, PrefixOperator};
+    use crate::common::ast::Expr;
     use crate::common::token::SpannedToken;
     use crate::lexer::Lexer;
 
@@ -589,46 +587,16 @@ mod tests {
             parser.parse_expression().unwrap()
         }
 
+        assert_eq!(parse_expression("3+4").lispy_string(), "(+ 3 4)");
+
         assert_eq!(
-            parse_expression("3+4"),
-            ExprKind::Infix(
-                InfixOperator::Add,
-                Box::new(ExprKind::Literal(Literal::Number(3))),
-                Box::new(ExprKind::Literal(Literal::Number(4)))
-            )
+            parse_expression("3 + 1 * 5 - 4").lispy_string(),
+            "(- (+ 3 (* 1 5)) 4)"
         );
 
         assert_eq!(
-            parse_expression("3 + 1 * 5 - 4"),
-            ExprKind::Infix(
-                InfixOperator::Subtract,
-                Box::new(ExprKind::Infix(
-                    InfixOperator::Add,
-                    Box::new(ExprKind::Literal(Literal::Number(3))),
-                    Box::new(ExprKind::Infix(
-                        InfixOperator::Multiply,
-                        Box::new(ExprKind::Literal(Literal::Number(1))),
-                        Box::new(ExprKind::Literal(Literal::Number(5)))
-                    ))
-                )),
-                Box::new(ExprKind::Literal(Literal::Number(4)))
-            )
-        );
-
-        assert_eq!(
-            parse_expression("-3 * (1 + 2)"),
-            ExprKind::Infix(
-                InfixOperator::Multiply,
-                Box::new(ExprKind::Prefix(
-                    PrefixOperator::Negate,
-                    Box::new(ExprKind::Literal(Literal::Number(3)))
-                )),
-                Box::new(ExprKind::Infix(
-                    InfixOperator::Add,
-                    Box::new(ExprKind::Literal(Literal::Number(1))),
-                    Box::new(ExprKind::Literal(Literal::Number(2)))
-                ))
-            )
+            parse_expression("-3 * (1 + 2)").lispy_string(),
+            "(* (- 3) (+ 1 2))"
         );
     }
 }

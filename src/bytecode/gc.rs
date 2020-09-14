@@ -17,7 +17,7 @@ pub struct GcPtr<T> {
 
 // Like GcPtr, but also roots the object (so that it will not be garbage collected).
 pub struct GcStrong<T> {
-    ptr: GcPtr<T>, // rather this than raw_ptr so that we can impl AsRef
+    ptr: GcPtr<T>,   // rather this than raw_ptr so that we can impl AsRef
     counter: Rc<()>, // reference counting for the pointer
 }
 
@@ -41,7 +41,7 @@ impl<T: Traceable> GcHeap<T> {
         self.objects.insert(ptr, rc.clone());
 
         GcStrong {
-            ptr: GcPtr{raw_ptr: ptr},
+            ptr: GcPtr { raw_ptr: ptr },
             counter: rc,
         }
     }
