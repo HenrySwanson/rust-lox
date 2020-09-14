@@ -4,6 +4,7 @@ use super::chunk::Chunk;
 use super::errs::{Error, VmResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
+use super::string_interning::{InternedString, StringInterner};
 use super::value::{HeapObject, Value};
 
 // TODO can this be converted into a build option?
@@ -12,6 +13,7 @@ const DEBUG_TRACE_EXECUTION: bool = false;
 pub struct VM {
     stack: Vec<Value>,
     heap: GcHeap<HeapObject>,
+    string_table: StringInterner,
 }
 
 impl VM {
@@ -19,6 +21,7 @@ impl VM {
         VM {
             stack: vec![],
             heap: GcHeap::new(),
+            string_table: StringInterner::new(),
         }
     }
 
@@ -36,6 +39,10 @@ impl VM {
             .get(stack_size - 1 - depth)
             .cloned()
             .ok_or(Error::InvalidStackIndex)
+    }
+
+    pub fn intern_string(&mut self, s: &str) -> InternedString {
+        self.string_table.get_interned(s)
     }
 
     pub fn push_to_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
@@ -132,17 +139,11 @@ impl VM {
     pub fn try_add(&mut self, lhs: Value, rhs: Value) -> Option<Value> {
         let value = match (lhs, rhs) {
             (Value::Number(n), Value::Number(m)) => Value::Number(n + m),
-            (Value::Obj(x), Value::Obj(y)) => {
-                let lhs = self.heap.get_unchecked(&x);
-                let rhs = self.heap.get_unchecked(&y);
-
-                match (lhs, rhs) {
-                    (HeapObject::String(s), HeapObject::String(t)) => {
-                        let obj = HeapObject::String(s.clone() + t);
-                        let gc_handle = self.heap.insert(obj);
-                        Value::Obj(gc_handle.downgrade())
-                    }
-                }
+            (Value::String(s), Value::String(t)) => {
+                // Gotta use as_ref to get a &str from the Rc<str>
+                let new_string = s.as_ref().to_owned() + &t;
+                let interned = self.string_table.get_interned(new_string);
+                Value::String(interned)
             }
             _ => return None,
         };

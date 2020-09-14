@@ -3,7 +3,7 @@ use crate::common::operator::{InfixOperator, PrefixOperator};
 
 use super::chunk::Chunk;
 use super::opcode::OpCode;
-use super::value::{HeapObject, Value};
+use super::value::Value;
 use super::vm::VM;
 
 const DEBUG_PRINT_CODE: bool = true;
@@ -57,8 +57,8 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_instruction(opcode, line_no);
             }
             ast::Literal::Str(s) => {
-                let obj = HeapObject::String(s.clone());
-                let idx = chunk.add_heap_constant(obj, self.vm_ref);
+                let value = Value::String(self.vm_ref.intern_string(s));
+                let idx = chunk.add_constant(value);
 
                 chunk.write_instruction(OpCode::Constant, line_no);
                 chunk.write_byte(idx, line_no);

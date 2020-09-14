@@ -3,6 +3,7 @@ mod compiler;
 mod errs;
 mod gc;
 mod opcode;
+mod string_interning;
 mod value;
 mod vm;
 
