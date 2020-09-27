@@ -25,6 +25,8 @@ impl Chunk {
         }
     }
 
+    // TODO: instruction-and-byte write?
+
     pub fn write_byte(&mut self, byte: u8, line_no: usize) {
         self.code.push(byte);
         self.line_nos.push(line_no);
@@ -87,7 +89,7 @@ impl Chunk {
         };
 
         match instruction {
-            OpCode::Return => println!("OP_RETURN"),
+            // Constants
             OpCode::Constant => {
                 let idx = self.code[offset + 1];
                 let constant = self.read_constant(idx);
@@ -108,6 +110,13 @@ impl Chunk {
             OpCode::Equal => println!("OP_EQUAL"),
             OpCode::GreaterThan => println!("OP_GREATER"),
             OpCode::LessThan => println!("OP_LESS"),
+            // Other
+            OpCode::Print => println!("OP_PRINT"),
+            OpCode::Pop => println!("OP_POP"),
+            OpCode::Return => println!("OP_RETURN"),
+            OpCode::DefineGlobal => println!("OP_DEFINE_GLOBAL"),
+            OpCode::GetGlobal => println!("OP_GET_GLOBAL"),
+            OpCode::SetGlobal => println!("OP_SET_GLOBAL"),
         };
         return offset + instruction.num_operands() + 1;
     }

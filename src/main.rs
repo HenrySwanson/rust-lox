@@ -1,4 +1,5 @@
 use crate::bytecode::{Chunk, Compiler, VM};
+use crate::common::ast;
 use crate::lexer::Lexer;
 use crate::parser::{Parser, Resolver};
 use crate::treewalk::Interpreter;
@@ -19,9 +20,15 @@ type RunResult = Result<(), String>;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    let interpreter: Box<dyn Runnable> = if USE_BYTECODE_INTERPRETER {
+        Box::new(VM::new())
+    } else {
+        Box::new(Interpreter::new())
+    };
+
     match args.len() {
-        1 => run_prompt(),
-        2 => run_file(&args[1]),
+        1 => run_prompt(interpreter),
+        2 => run_file(interpreter, &args[1]),
         _ => {
             eprintln!("Usage: rlox [script]");
             process::exit(64);
@@ -29,9 +36,7 @@ fn main() {
     }
 }
 
-fn run_prompt() {
-    let mut interpreter = Interpreter::new();
-
+fn run_prompt(mut interpreter: Box<dyn Runnable>) {
     loop {
         let mut input = String::new();
         print!("> ");
@@ -50,24 +55,23 @@ fn run_prompt() {
             print!("  ");
         }
 
-        match run(&mut interpreter, &input) {
+        match run(interpreter.as_mut(), &input) {
             Ok(_) => {}
             Err(e) => report_error(&e),
         }
     }
 }
 
-fn run_file(filename: &str) {
+fn run_file(mut interpreter: Box<dyn Runnable>, filename: &str) {
     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
-    let mut interpreter = Interpreter::new();
 
-    match run(&mut interpreter, &contents) {
+    match run(interpreter.as_mut(), &contents) {
         Ok(_) => {}
         Err(e) => report_error(&e),
     }
 }
 
-fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
+fn run(interpreter: &mut dyn Runnable, source: &str) -> RunResult {
     // Lex the string
     let lexer = Lexer::new(source);
     let tokens: Vec<_> = lexer.iter().collect();
@@ -91,27 +95,27 @@ fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
     //     println!("{:?}", s);
     // }
 
-    let mut statements: Vec<_> = match statements.into_iter().collect() {
+    let statements: Vec<_> = match statements.into_iter().collect() {
         Ok(statements) => statements,
         Err(e) => return Err(format!("{:?}", e)),
     };
 
-    if USE_BYTECODE_INTERPRETER {
-        let mut vm = VM::new();
-        let mut compiler = Compiler::new(&mut vm);
+    interpreter.consume_statements(statements)
+}
 
-        // TODO: this is still very hacky
-        let mut bytecode = Chunk::new();
-        compiler.compile(&statements[0], &mut bytecode);
+fn report_error(err_msg: &str) {
+    eprintln!("An error: {}", err_msg);
+}
 
-        match vm.interpret(&bytecode) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(format!("{:?}", e)),
-        }
-    } else {
+trait Runnable {
+    fn consume_statements(&mut self, stmts: Vec<ast::Stmt>) -> RunResult;
+}
+
+impl Runnable for Interpreter {
+    fn consume_statements(&mut self, mut stmts: Vec<ast::Stmt>) -> RunResult {
         // Resolve variable references
         let mut resolver = Resolver::new();
-        for s in statements.iter_mut() {
+        for s in stmts.iter_mut() {
             match resolver.resolve_root(s) {
                 Ok(_) => (),
                 Err(e) => return Err(format!("{:?}", e)),
@@ -119,13 +123,24 @@ fn run(interpreter: &mut Interpreter, source: &str) -> RunResult {
         }
 
         // And evaluate the statements
-        match interpreter.eval_statements(statements) {
+        match self.eval_statements(stmts) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("{:?}", e)),
         }
     }
 }
 
-fn report_error(err_msg: &str) {
-    eprintln!("An error: {}", err_msg);
+impl Runnable for VM {
+    fn consume_statements(&mut self, stmts: Vec<ast::Stmt>) -> RunResult {
+        // Compile the AST
+        let mut compiler = Compiler::new(self);
+
+        let mut bytecode = Chunk::new();
+        compiler.compile(&stmts, &mut bytecode);
+
+        match self.interpret(&bytecode) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("{:?}", e)),
+        }
+    }
 }

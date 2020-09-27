@@ -5,6 +5,7 @@ pub enum Error {
     IncorrectOperandType,
     StackEmpty,
     InvalidStackIndex,
+    UndefinedGlobal(String),
 }
 
 pub type VmResult<T> = Result<T, Error>;

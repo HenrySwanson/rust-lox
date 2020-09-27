@@ -1,7 +1,7 @@
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, PrefixOperator};
 
-use super::chunk::Chunk;
+use super::chunk::{Chunk, ConstantIdx};
 use super::opcode::OpCode;
 use super::value::Value;
 use super::vm::VM;
@@ -20,14 +20,36 @@ impl<'vm> Compiler<'vm> {
         Compiler { vm_ref }
     }
 
-    pub fn compile(&mut self, stmt: &ast::Stmt, chunk: &mut Chunk) {
+    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>, chunk: &mut Chunk) {
+        for stmt in stmts.iter() {
+            self.compile_statement(stmt, chunk);
+        }
+
+        // Return, to exit the VM
+        chunk.write_instruction(OpCode::Return, 0);
+    }
+
+    pub fn compile_statement(&mut self, stmt: &ast::Stmt, chunk: &mut Chunk) {
+        let line_no = stmt.span.lo.line_no;
         let expr = match &stmt.kind {
-            ast::StmtKind::Expression(expr) => expr,
+            ast::StmtKind::Expression(expr) => {
+                self.compile_expression(expr, chunk);
+                chunk.write_instruction(OpCode::Pop, line_no);
+            }
+            ast::StmtKind::Print(expr) => {
+                self.compile_expression(expr, chunk);
+                chunk.write_instruction(OpCode::Print, line_no);
+            }
+            ast::StmtKind::VariableDecl(name, expr) => {
+                // We store the name of the global as a string constant
+                let global_idx = self.add_constant_string(name, chunk);
+
+                self.compile_expression(expr, chunk);
+                chunk.write_instruction(OpCode::DefineGlobal, line_no);
+                chunk.write_byte(global_idx, line_no);
+                           }
             _ => panic!("Don't know how to compile that statement yet!"),
         };
-
-        self.compile_expression(expr, chunk);
-        chunk.write_instruction(OpCode::Return, 0);
 
         if DEBUG_PRINT_CODE {
             chunk.disassemble("code");
@@ -35,11 +57,25 @@ impl<'vm> Compiler<'vm> {
     }
 
     fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk) {
+        // stack effect: puts value on top of the stack
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no, chunk),
             ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, chunk),
             ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr, chunk),
+            ast::ExprKind::Variable(var) => {
+                let global_idx = self.add_constant_string(&var.name, chunk);
+                chunk.write_instruction(OpCode::GetGlobal, line_no);
+                chunk.write_byte(global_idx, line_no);
+            }
+            ast::ExprKind::Assignment(var, expr) => {
+                // Compile the RHS, then add instructions to pull it onto the stack
+                self.compile_expression(expr, chunk);
+
+                let global_idx = self.add_constant_string(&var.name, chunk);
+                chunk.write_instruction(OpCode::SetGlobal, line_no);
+                chunk.write_byte(global_idx, line_no);
+            }
             _ => panic!("Don't know how to compile that expression yet!"),
         }
     }
@@ -57,8 +93,7 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_instruction(opcode, line_no);
             }
             ast::Literal::Str(s) => {
-                let value = Value::String(self.vm_ref.intern_string(s));
-                let idx = chunk.add_constant(value);
+                let idx = self.add_constant_string(s, chunk);
 
                 chunk.write_instruction(OpCode::Constant, line_no);
                 chunk.write_byte(idx, line_no);
@@ -112,5 +147,12 @@ impl<'vm> Compiler<'vm> {
         };
 
         chunk.write_instruction(opcode, expr.span.lo.line_no);
+    }
+
+    // ---- helpers ----
+
+    fn add_constant_string(&mut self, name: &str, chunk: &mut Chunk) -> ConstantIdx {
+                        let name = Value::String(self.vm_ref.intern_string(name));
+                chunk.add_constant(name)
     }
 }

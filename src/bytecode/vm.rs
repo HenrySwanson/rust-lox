@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
+use std::collections::HashMap;
 
-use super::chunk::Chunk;
+use super::chunk::{Chunk};
 use super::errs::{Error, VmResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
@@ -14,6 +15,7 @@ pub struct VM {
     stack: Vec<Value>,
     heap: GcHeap<HeapObject>,
     string_table: StringInterner,
+    globals: HashMap<InternedString, Value>,
 }
 
 impl VM {
@@ -22,6 +24,7 @@ impl VM {
             stack: vec![],
             heap: GcHeap::new(),
             string_table: StringInterner::new(),
+            globals: HashMap::new(),
         }
     }
 
@@ -70,11 +73,7 @@ impl VM {
             };
 
             match op {
-                OpCode::Return => {
-                    let value = self.pop()?;
-                    println!("Return: {:?}", value);
-                    return Ok(());
-                }
+                // Constants
                 OpCode::Constant => {
                     let constant = chunk.read_constant(chunk.code[ip + 1]);
                     self.push(constant);
@@ -128,6 +127,43 @@ impl VM {
                 }
                 OpCode::GreaterThan => self.comparison_binop(|a, b| a > b)?,
                 OpCode::LessThan => self.comparison_binop(|a, b| a < b)?,
+                // Other
+                OpCode::Return => {
+                    return Ok(());
+                }
+                OpCode::Print => {
+                    let value = self.pop()?;
+                    println!("[out] {:?}", value);
+                }
+                OpCode::Pop => {
+                    self.pop()?;
+                }
+                OpCode::DefineGlobal => {
+                    let name = self.read_string(chunk, ip + 1);
+                    let value = self.pop()?;
+                    self.globals.insert(name, value);
+                }
+                OpCode::GetGlobal => {
+                    let name = self.read_string(chunk, ip + 1);
+                    let value = match self.globals.get(&name) {
+                        Some(value) => value.clone(),
+                        None => {
+                            let name: String = (*name).to_owned();
+                            return Err(Error::UndefinedGlobal(name));
+                        }
+                    };
+                    self.push(value);
+                }
+                OpCode::SetGlobal => {
+                    let name = self.read_string(chunk, ip + 1);
+                    if !self.globals.contains_key(&name) {
+                                                    let name: String = (*name).to_owned();
+                        return Err(Error::UndefinedGlobal(name))
+                    }
+                    // don't pop; assignment may be inside other expressions
+                    let value = self.peek(0)?;
+                    self.globals.insert(name, value);
+                }
             }
 
             ip += op.num_operands() + 1;
@@ -182,5 +218,12 @@ impl VM {
         F: Fn(i64, i64) -> bool,
     {
         self.numerical_binop(|a, b| Value::Boolean(closure(a, b)))
+    }
+
+    fn read_string(&self, chunk: &Chunk, idx: usize) -> InternedString {
+        match chunk.read_constant(chunk.code[idx]) {
+                        Value::String(s) => s,
+                        _ => panic!("Global table contains non-string"),
+                    }
     }
 }
