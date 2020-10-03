@@ -8,7 +8,7 @@ use super::vm::VM;
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
 pub struct Chunk {
-    pub code: Vec<u8>,
+    code: Vec<u8>,
     constants: Vec<Value>,
     line_nos: Vec<usize>,
 
@@ -27,13 +27,46 @@ impl Chunk {
 
     // TODO: instruction-and-byte write?
 
-    pub fn write_byte(&mut self, byte: u8, line_no: usize) {
+    pub fn write_op(&mut self, op: OpCode, line_no: usize) {
+        self.write_u8(op.into(), line_no)
+    }
+
+    pub fn try_read_op(&self, idx: usize) -> Result<OpCode, u8> {
+        let byte = self.code[idx];
+
+        // Convert byte to opcode
+        OpCode::try_from(byte).map_err(|e| e.number)
+    }
+
+    pub fn write_u8(&mut self, byte: u8, line_no: usize) {
         self.code.push(byte);
         self.line_nos.push(line_no);
     }
 
-    pub fn write_instruction(&mut self, instruction: OpCode, line_no: usize) {
-        self.write_byte(instruction.into(), line_no)
+    pub fn read_u8(&self, idx: usize) -> u8 {
+        self.code[idx]
+    }
+
+    pub fn write_u16(&mut self, short: u16, line_no: usize) {
+        // remember to write twice to line #s
+        let bytes = short.to_be_bytes();
+        self.write_u8(bytes[0], line_no);
+        self.write_u8(bytes[1], line_no);
+    }
+
+    pub fn read_u16(&self, idx: usize) -> u16 {
+        let bytes = [self.code[idx], self.code[idx + 1]];
+        u16::from_be_bytes(bytes)
+    }
+
+    pub fn write_op_with_u8(&mut self, op: OpCode, byte: u8, line_no: usize) {
+        self.write_op(op, line_no);
+        self.write_u8(byte, line_no);
+    }
+
+    pub fn write_instruction_with_u16(&mut self, op: OpCode, short: u16, line_no: usize) {
+        self.write_op(op, line_no);
+        self.write_u16(short, line_no);
     }
 
     pub fn add_constant(&mut self, constant: Value) -> ConstantIdx {

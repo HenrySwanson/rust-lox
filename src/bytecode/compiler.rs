@@ -43,7 +43,7 @@ impl<'vm> Compiler<'vm> {
         }
 
         // Return, to exit the VM
-        chunk.write_instruction(OpCode::Return, 0);
+        chunk.write_op(OpCode::Return, 0);
 
         if DEBUG_PRINT_CODE {
             chunk.disassemble("code");
@@ -56,11 +56,11 @@ impl<'vm> Compiler<'vm> {
         match &stmt.kind {
             ast::StmtKind::Expression(expr) => {
                 self.compile_expression(expr, chunk)?;
-                chunk.write_instruction(OpCode::Pop, line_no);
+                chunk.write_op(OpCode::Pop, line_no);
             }
             ast::StmtKind::Print(expr) => {
                 self.compile_expression(expr, chunk)?;
-                chunk.write_instruction(OpCode::Print, line_no);
+                chunk.write_op(OpCode::Print, line_no);
             }
             ast::StmtKind::VariableDecl(name, expr) => {
                 self.define_variable(name, expr, chunk, line_no)?
@@ -78,7 +78,7 @@ impl<'vm> Compiler<'vm> {
         Ok(())
     }
 
-    fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk)  -> CompilerResult<()>{
+    fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk) -> CompilerResult<()> {
         // stack effect: puts value on top of the stack
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
@@ -98,21 +98,19 @@ impl<'vm> Compiler<'vm> {
             ast::Literal::Number(n) => {
                 let value = Value::Number((*n).into());
                 let idx = chunk.add_constant(value);
-                chunk.write_instruction(OpCode::Constant, line_no);
-                chunk.write_byte(idx, line_no);
+                chunk.write_op_with_u8(OpCode::Constant, idx, line_no);
             }
             ast::Literal::Boolean(b) => {
                 let opcode = if *b { OpCode::True } else { OpCode::False };
-                chunk.write_instruction(opcode, line_no);
+                chunk.write_op(opcode, line_no);
             }
             ast::Literal::Str(s) => {
                 let idx = self.add_constant_string(s, chunk);
 
-                chunk.write_instruction(OpCode::Constant, line_no);
-                chunk.write_byte(idx, line_no);
+                chunk.write_op_with_u8(OpCode::Constant, idx, line_no);
             }
             ast::Literal::Nil => {
-                chunk.write_instruction(OpCode::Nil, line_no);
+                chunk.write_op(OpCode::Nil, line_no);
             }
         }
     }
@@ -123,49 +121,60 @@ impl<'vm> Compiler<'vm> {
         lhs: &ast::Expr,
         rhs: &ast::Expr,
         chunk: &mut Chunk,
-    )  -> CompilerResult<()>{
+    ) -> CompilerResult<()> {
         let line_no = lhs.span.hi.line_no; // I guess??
 
         self.compile_expression(lhs, chunk)?;
         self.compile_expression(rhs, chunk)?;
 
         match op {
-            InfixOperator::Add => chunk.write_instruction(OpCode::Add, line_no),
-            InfixOperator::Subtract => chunk.write_instruction(OpCode::Subtract, line_no),
-            InfixOperator::Multiply => chunk.write_instruction(OpCode::Multiply, line_no),
-            InfixOperator::Divide => chunk.write_instruction(OpCode::Divide, line_no),
-            InfixOperator::EqualTo => chunk.write_instruction(OpCode::Equal, line_no),
+            InfixOperator::Add => chunk.write_op(OpCode::Add, line_no),
+            InfixOperator::Subtract => chunk.write_op(OpCode::Subtract, line_no),
+            InfixOperator::Multiply => chunk.write_op(OpCode::Multiply, line_no),
+            InfixOperator::Divide => chunk.write_op(OpCode::Divide, line_no),
+            InfixOperator::EqualTo => chunk.write_op(OpCode::Equal, line_no),
             InfixOperator::NotEqualTo => {
-                chunk.write_instruction(OpCode::Equal, line_no);
-                chunk.write_instruction(OpCode::Not, line_no)
+                chunk.write_op(OpCode::Equal, line_no);
+                chunk.write_op(OpCode::Not, line_no)
             }
-            InfixOperator::GreaterThan => chunk.write_instruction(OpCode::GreaterThan, line_no),
+            InfixOperator::GreaterThan => chunk.write_op(OpCode::GreaterThan, line_no),
             InfixOperator::GreaterEq => {
-                chunk.write_instruction(OpCode::LessThan, line_no);
-                chunk.write_instruction(OpCode::Not, line_no)
+                chunk.write_op(OpCode::LessThan, line_no);
+                chunk.write_op(OpCode::Not, line_no)
             }
-            InfixOperator::LessThan => chunk.write_instruction(OpCode::LessThan, line_no),
+            InfixOperator::LessThan => chunk.write_op(OpCode::LessThan, line_no),
             InfixOperator::LessEq => {
-                chunk.write_instruction(OpCode::GreaterThan, line_no);
-                chunk.write_instruction(OpCode::Not, line_no)
+                chunk.write_op(OpCode::GreaterThan, line_no);
+                chunk.write_op(OpCode::Not, line_no)
             }
         };
 
         Ok(())
     }
 
-    fn compile_prefix(&mut self, op: PrefixOperator, expr: &ast::Expr, chunk: &mut Chunk) -> CompilerResult<()>{
+    fn compile_prefix(
+        &mut self,
+        op: PrefixOperator,
+        expr: &ast::Expr,
+        chunk: &mut Chunk,
+    ) -> CompilerResult<()> {
         self.compile_expression(expr, chunk)?;
         let opcode = match op {
             PrefixOperator::Negate => OpCode::Negate,
             PrefixOperator::LogicalNot => OpCode::Not,
         };
 
-        chunk.write_instruction(opcode, expr.span.lo.line_no);
+        chunk.write_op(opcode, expr.span.lo.line_no);
         Ok(())
     }
 
-    fn define_variable(&mut self, name: &str, expr: &ast::Expr, chunk: &mut Chunk, line_no: usize) -> CompilerResult<()> {
+    fn define_variable(
+        &mut self,
+        name: &str,
+        expr: &ast::Expr,
+        chunk: &mut Chunk,
+        line_no: usize,
+    ) -> CompilerResult<()> {
         // Check if we're defining a global or local variable
         if self.current_scope == 0 {
             // We store the name of the global as a string constant, so the VM can
@@ -173,8 +182,7 @@ impl<'vm> Compiler<'vm> {
             let global_idx = self.add_constant_string(name, chunk);
 
             self.compile_expression(expr, chunk)?;
-            chunk.write_instruction(OpCode::DefineGlobal, line_no);
-            chunk.write_byte(global_idx, line_no);
+            chunk.write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
         } else {
             // Add the local to the compiler's list, and create instructions
             // to put the expression on the stack.
@@ -186,19 +194,22 @@ impl<'vm> Compiler<'vm> {
         Ok(())
     }
 
-    fn get_variable(&mut self, var: &ast::VariableRef, chunk: &mut Chunk, line_no: usize) -> CompilerResult<()> {
+    fn get_variable(
+        &mut self,
+        var: &ast::VariableRef,
+        chunk: &mut Chunk,
+        line_no: usize,
+    ) -> CompilerResult<()> {
         match self.find_local(&var.name)? {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a GetGlobal instruction.
                 let global_idx = self.add_constant_string(&var.name, chunk);
-                chunk.write_instruction(OpCode::GetGlobal, line_no);
-                chunk.write_byte(global_idx, line_no);
+                chunk.write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
             }
             Some(idx) => {
                 // Local variable
-                chunk.write_instruction(OpCode::GetLocal, line_no);
-                chunk.write_byte(idx, line_no);
+                chunk.write_op_with_u8(OpCode::GetLocal, idx, line_no);
             }
         }
 
@@ -211,7 +222,7 @@ impl<'vm> Compiler<'vm> {
         expr: &ast::Expr,
         chunk: &mut Chunk,
         line_no: usize,
-    )  -> CompilerResult<()>{
+    ) -> CompilerResult<()> {
         // In any case, we need to emit instructions to put the result of the
         // expression on the stack.
         self.compile_expression(expr, chunk)?;
@@ -221,13 +232,11 @@ impl<'vm> Compiler<'vm> {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a SetGlobal instruction.
                 let global_idx = self.add_constant_string(&var.name, chunk);
-                chunk.write_instruction(OpCode::SetGlobal, line_no);
-                chunk.write_byte(global_idx, line_no);
+                chunk.write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
             }
             Some(idx) => {
                 // Local variable
-                chunk.write_instruction(OpCode::SetLocal, line_no);
-                chunk.write_byte(idx, line_no);
+                chunk.write_op_with_u8(OpCode::SetLocal, idx, line_no);
             }
         }
 
@@ -252,7 +261,7 @@ impl<'vm> Compiler<'vm> {
         // we're done with that scope.
         while let Some(local) = self.locals.last() {
             if local.scope_depth > self.current_scope {
-                chunk.write_instruction(OpCode::Pop, 0); // TODO line no
+                chunk.write_op(OpCode::Pop, 0); // TODO line no
                 self.locals.pop();
             } else {
                 break;

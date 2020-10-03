@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
 
 use super::chunk::Chunk;
 use super::errs::{RuntimeError, RuntimeResult};
@@ -63,19 +62,16 @@ impl VM {
                 chunk.disassemble_at(ip);
             }
 
-            // TODO get?
-            let byte = chunk.code[ip];
-
-            // Convert byte to opcode
-            let op = match OpCode::try_from(byte) {
+            let op = match chunk.try_read_op(ip) {
                 Ok(op) => op,
-                Err(_) => return Err(RuntimeError::InvalidOpcode(byte)),
+                Err(byte) => return Err(RuntimeError::InvalidOpcode(byte)),
             };
 
             match op {
                 // Constants
                 OpCode::Constant => {
-                    let constant = chunk.read_constant(chunk.code[ip + 1]);
+                    let idx = chunk.read_u8(ip + 1);
+                    let constant = chunk.read_constant(idx);
                     self.push(constant);
                 }
                 OpCode::True => self.push(Value::Boolean(true)),
@@ -165,13 +161,13 @@ impl VM {
                     self.globals.insert(name, value);
                 }
                 OpCode::GetLocal => {
-                    let idx = chunk.code[ip + 1];
+                    let idx = chunk.read_u8(ip + 1);
                     let value = self.stack[idx as usize].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
                     let value = self.pop()?;
-                    let idx = chunk.code[ip + 1];
+                    let idx = chunk.read_u8(ip + 1);
                     self.stack[idx as usize] = value;
                 }
             }
@@ -231,7 +227,7 @@ impl VM {
     }
 
     fn read_string(&self, chunk: &Chunk, idx: usize) -> InternedString {
-        match chunk.read_constant(chunk.code[idx]) {
+        match chunk.read_constant(chunk.read_u8(idx)) {
             Value::String(s) => s,
             _ => panic!("Global table contains non-string"),
         }

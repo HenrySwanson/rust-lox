@@ -1,8 +1,8 @@
 #[derive(Debug)]
 pub enum CompilerError {
-	LocalAlreadyExists(String),
-	LocalUsedInOwnInitializer(String),
-	TooManyLocals,
+    LocalAlreadyExists(String),
+    LocalUsedInOwnInitializer(String),
+    TooManyLocals,
 }
 
 // TODO how can i get the failed instruction in here?
