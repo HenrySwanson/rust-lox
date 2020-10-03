@@ -27,6 +27,8 @@ pub enum OpCode {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    GetLocal,
+    SetLocal,
 }
 
 impl OpCode {
@@ -41,6 +43,7 @@ impl OpCode {
             OpCode::Equal | OpCode::GreaterThan | OpCode::LessThan => 0,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
             OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => 1,
+            OpCode::GetLocal | OpCode::SetLocal => 1,
         }
     }
 }

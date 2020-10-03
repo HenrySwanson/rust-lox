@@ -74,7 +74,7 @@ impl Chunk {
         // Print byte offset and line number
         print!("{:04} ", offset);
         if offset == 0 || self.line_nos[offset] != self.line_nos[offset - 1] {
-            print!("{:04} ", self.line_nos[offset]);
+            print!("{:4} ", self.line_nos[offset]);
         } else {
             print!("   | ");
         }
@@ -88,12 +88,24 @@ impl Chunk {
             }
         };
 
+        macro_rules! print_two {
+            ($op:expr, $first:expr) => {
+                println!("{:20} {:4}", $op, $first);
+            };
+        }
+
+        macro_rules! print_three {
+            ($op:expr, $first:expr, $second:expr) => {
+                println!("{:20} {:04} {:?}", $op, $first, $second);
+            };
+        }
+
         match instruction {
             // Constants
             OpCode::Constant => {
                 let idx = self.code[offset + 1];
                 let constant = self.read_constant(idx);
-                println!("OP_CONSTANT {:4} {:?}", idx, constant);
+                print_three!("OP_CONSTANT", idx, constant);
             }
             OpCode::True => println!("OP_TRUE"),
             OpCode::False => println!("OP_FALSE"),
@@ -114,9 +126,29 @@ impl Chunk {
             OpCode::Print => println!("OP_PRINT"),
             OpCode::Pop => println!("OP_POP"),
             OpCode::Return => println!("OP_RETURN"),
-            OpCode::DefineGlobal => println!("OP_DEFINE_GLOBAL"),
-            OpCode::GetGlobal => println!("OP_GET_GLOBAL"),
-            OpCode::SetGlobal => println!("OP_SET_GLOBAL"),
+            OpCode::DefineGlobal => {
+                let idx = self.code[offset + 1];
+                let constant = self.read_constant(idx);
+                print_three!("OP_DEFINE_GLOBAL", idx, constant);
+            }
+            OpCode::GetGlobal => {
+                let idx = self.code[offset + 1];
+                let constant = self.read_constant(idx);
+                print_three!("OP_GET_GLOBAL", idx, constant);
+            }
+            OpCode::SetGlobal => {
+                let idx = self.code[offset + 1];
+                let constant = self.read_constant(idx);
+                print_three!("OP_SET_GLOBAL", idx, constant);
+            }
+            OpCode::GetLocal => {
+                let idx = self.code[offset + 1];
+                print_two!("OP_GET_LOCAL", idx);
+            }
+            OpCode::SetLocal => {
+                let idx = self.code[offset + 1];
+                print_two!("OP_SET_LOCAL", idx);
+            }
         };
         return offset + instruction.num_operands() + 1;
     }

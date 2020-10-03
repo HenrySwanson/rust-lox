@@ -1,7 +1,7 @@
-use std::convert::TryFrom;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
-use super::chunk::{Chunk};
+use super::chunk::Chunk;
 use super::errs::{Error, VmResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
@@ -157,12 +157,22 @@ impl VM {
                 OpCode::SetGlobal => {
                     let name = self.read_string(chunk, ip + 1);
                     if !self.globals.contains_key(&name) {
-                                                    let name: String = (*name).to_owned();
-                        return Err(Error::UndefinedGlobal(name))
+                        let name: String = (*name).to_owned();
+                        return Err(Error::UndefinedGlobal(name));
                     }
                     // don't pop; assignment may be inside other expressions
                     let value = self.peek(0)?;
                     self.globals.insert(name, value);
+                }
+                OpCode::GetLocal => {
+                    let idx = chunk.code[ip + 1];
+                    let value = self.stack[idx as usize].clone();
+                    self.push(value);
+                }
+                OpCode::SetLocal => {
+                    let value = self.pop()?;
+                    let idx = chunk.code[ip + 1];
+                    self.stack[idx as usize] = value;
                 }
             }
 
@@ -222,8 +232,8 @@ impl VM {
 
     fn read_string(&self, chunk: &Chunk, idx: usize) -> InternedString {
         match chunk.read_constant(chunk.code[idx]) {
-                        Value::String(s) => s,
-                        _ => panic!("Global table contains non-string"),
-                    }
+            Value::String(s) => s,
+            _ => panic!("Global table contains non-string"),
+        }
     }
 }
