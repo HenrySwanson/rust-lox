@@ -1,5 +1,13 @@
 #[derive(Debug)]
-pub enum Error {
+pub enum CompilerError {
+	LocalAlreadyExists(String),
+	LocalUsedInOwnInitializer(String),
+	TooManyLocals,
+}
+
+// TODO how can i get the failed instruction in here?
+#[derive(Debug)]
+pub enum RuntimeError {
     InvalidOpcode(u8),
     DivideByZero,
     IncorrectOperandType,
@@ -8,6 +16,5 @@ pub enum Error {
     UndefinedGlobal(String),
 }
 
-pub type VmResult<T> = Result<T, Error>;
-
-// TODO how can i get the failed instruction in here?
+pub type CompilerResult<T> = Result<T, CompilerError>;
+pub type RuntimeResult<T> = Result<T, RuntimeError>;

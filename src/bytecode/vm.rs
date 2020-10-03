@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 
 use super::chunk::Chunk;
-use super::errs::{Error, VmResult};
+use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
@@ -32,16 +32,16 @@ impl VM {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> VmResult<Value> {
-        self.stack.pop().ok_or(Error::StackEmpty)
+    fn pop(&mut self) -> RuntimeResult<Value> {
+        self.stack.pop().ok_or(RuntimeError::StackEmpty)
     }
 
-    fn peek(&self, depth: usize) -> VmResult<Value> {
+    fn peek(&self, depth: usize) -> RuntimeResult<Value> {
         let stack_size = self.stack.len();
         self.stack
             .get(stack_size - 1 - depth)
             .cloned()
-            .ok_or(Error::InvalidStackIndex)
+            .ok_or(RuntimeError::InvalidStackIndex)
     }
 
     pub fn intern_string(&mut self, s: &str) -> InternedString {
@@ -52,11 +52,11 @@ impl VM {
         self.heap.insert(obj)
     }
 
-    pub fn interpret(&mut self, chunk: &Chunk) -> VmResult<()> {
+    pub fn interpret(&mut self, chunk: &Chunk) -> RuntimeResult<()> {
         self.run(chunk, 0)
     }
 
-    fn run(&mut self, chunk: &Chunk, mut ip: usize) -> VmResult<()> {
+    fn run(&mut self, chunk: &Chunk, mut ip: usize) -> RuntimeResult<()> {
         loop {
             if DEBUG_TRACE_EXECUTION {
                 println!("          {:?}", self.stack);
@@ -69,7 +69,7 @@ impl VM {
             // Convert byte to opcode
             let op = match OpCode::try_from(byte) {
                 Ok(op) => op,
-                Err(_) => return Err(Error::InvalidOpcode(byte)),
+                Err(_) => return Err(RuntimeError::InvalidOpcode(byte)),
             };
 
             match op {
@@ -88,7 +88,7 @@ impl VM {
 
                     let new_object = match self.try_add(lhs, rhs) {
                         Some(obj) => obj,
-                        None => return Err(Error::IncorrectOperandType),
+                        None => return Err(RuntimeError::IncorrectOperandType),
                     };
 
                     self.pop()?;
@@ -101,7 +101,7 @@ impl VM {
                     // Check for zero
                     if let Value::Number(n) = self.peek(0)? {
                         if n == 0 {
-                            return Err(Error::DivideByZero);
+                            return Err(RuntimeError::DivideByZero);
                         }
                     }
 
@@ -112,7 +112,7 @@ impl VM {
                         self.pop()?;
                         self.push(Value::Number(-n));
                     }
-                    _ => return Err(Error::IncorrectOperandType),
+                    _ => return Err(RuntimeError::IncorrectOperandType),
                 },
                 // Logical
                 OpCode::Not => {
@@ -149,7 +149,7 @@ impl VM {
                         Some(value) => value.clone(),
                         None => {
                             let name: String = (*name).to_owned();
-                            return Err(Error::UndefinedGlobal(name));
+                            return Err(RuntimeError::UndefinedGlobal(name));
                         }
                     };
                     self.push(value);
@@ -158,7 +158,7 @@ impl VM {
                     let name = self.read_string(chunk, ip + 1);
                     if !self.globals.contains_key(&name) {
                         let name: String = (*name).to_owned();
-                        return Err(Error::UndefinedGlobal(name));
+                        return Err(RuntimeError::UndefinedGlobal(name));
                     }
                     // don't pop; assignment may be inside other expressions
                     let value = self.peek(0)?;
@@ -197,7 +197,7 @@ impl VM {
         Some(value)
     }
 
-    fn numerical_binop<F>(&mut self, closure: F) -> VmResult<()>
+    fn numerical_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
         F: Fn(i64, i64) -> Value,
     {
@@ -212,18 +212,18 @@ impl VM {
                 self.push(result);
                 Ok(())
             }
-            (_, _) => Err(Error::IncorrectOperandType),
+            (_, _) => Err(RuntimeError::IncorrectOperandType),
         }
     }
 
-    fn arithmetic_binop<F>(&mut self, closure: F) -> VmResult<()>
+    fn arithmetic_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
         F: Fn(i64, i64) -> i64,
     {
         self.numerical_binop(|a, b| Value::Number(closure(a, b)))
     }
 
-    fn comparison_binop<F>(&mut self, closure: F) -> VmResult<()>
+    fn comparison_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
         F: Fn(i64, i64) -> bool,
     {

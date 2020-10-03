@@ -2,6 +2,7 @@ use crate::common::ast;
 use crate::common::operator::{InfixOperator, PrefixOperator};
 
 use super::chunk::{Chunk, ConstantIdx};
+use super::errs::{CompilerError, CompilerResult};
 use super::opcode::OpCode;
 use super::value::Value;
 use super::vm::VM;
@@ -36,9 +37,9 @@ impl<'vm> Compiler<'vm> {
         }
     }
 
-    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>, chunk: &mut Chunk) {
+    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>, chunk: &mut Chunk) -> CompilerResult<()> {
         for stmt in stmts.iter() {
-            self.compile_statement(stmt, chunk);
+            self.compile_statement(stmt, chunk)?;
         }
 
         // Return, to exit the VM
@@ -47,44 +48,49 @@ impl<'vm> Compiler<'vm> {
         if DEBUG_PRINT_CODE {
             chunk.disassemble("code");
         }
+        Ok(())
     }
 
-    pub fn compile_statement(&mut self, stmt: &ast::Stmt, chunk: &mut Chunk) {
+    pub fn compile_statement(&mut self, stmt: &ast::Stmt, chunk: &mut Chunk) -> CompilerResult<()> {
         let line_no = stmt.span.lo.line_no;
         match &stmt.kind {
             ast::StmtKind::Expression(expr) => {
-                self.compile_expression(expr, chunk);
+                self.compile_expression(expr, chunk)?;
                 chunk.write_instruction(OpCode::Pop, line_no);
             }
             ast::StmtKind::Print(expr) => {
-                self.compile_expression(expr, chunk);
+                self.compile_expression(expr, chunk)?;
                 chunk.write_instruction(OpCode::Print, line_no);
             }
             ast::StmtKind::VariableDecl(name, expr) => {
-                self.define_variable(name, expr, chunk, line_no)
+                self.define_variable(name, expr, chunk, line_no)?
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
                 for stmt in stmts.iter() {
-                    self.compile_statement(stmt, chunk);
+                    self.compile_statement(stmt, chunk)?;
                 }
                 self.end_scope(chunk);
             }
             _ => panic!("Don't know how to compile that statement yet!"),
         };
+
+        Ok(())
     }
 
-    fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk) {
+    fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk)  -> CompilerResult<()>{
         // stack effect: puts value on top of the stack
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no, chunk),
-            ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, chunk),
-            ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr, chunk),
-            ast::ExprKind::Variable(var) => self.get_variable(var, chunk, line_no),
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, chunk, line_no),
+            ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, chunk)?,
+            ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr, chunk)?,
+            ast::ExprKind::Variable(var) => self.get_variable(var, chunk, line_no)?,
+            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, chunk, line_no)?,
             _ => panic!("Don't know how to compile that expression yet!"),
-        }
+        };
+
+        Ok(())
     }
 
     fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize, chunk: &mut Chunk) {
@@ -117,11 +123,11 @@ impl<'vm> Compiler<'vm> {
         lhs: &ast::Expr,
         rhs: &ast::Expr,
         chunk: &mut Chunk,
-    ) {
+    )  -> CompilerResult<()>{
         let line_no = lhs.span.hi.line_no; // I guess??
 
-        self.compile_expression(lhs, chunk);
-        self.compile_expression(rhs, chunk);
+        self.compile_expression(lhs, chunk)?;
+        self.compile_expression(rhs, chunk)?;
 
         match op {
             InfixOperator::Add => chunk.write_instruction(OpCode::Add, line_no),
@@ -143,40 +149,45 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_instruction(OpCode::GreaterThan, line_no);
                 chunk.write_instruction(OpCode::Not, line_no)
             }
-        }
+        };
+
+        Ok(())
     }
 
-    fn compile_prefix(&mut self, op: PrefixOperator, expr: &ast::Expr, chunk: &mut Chunk) {
-        self.compile_expression(expr, chunk);
+    fn compile_prefix(&mut self, op: PrefixOperator, expr: &ast::Expr, chunk: &mut Chunk) -> CompilerResult<()>{
+        self.compile_expression(expr, chunk)?;
         let opcode = match op {
             PrefixOperator::Negate => OpCode::Negate,
             PrefixOperator::LogicalNot => OpCode::Not,
         };
 
         chunk.write_instruction(opcode, expr.span.lo.line_no);
+        Ok(())
     }
 
-    fn define_variable(&mut self, name: &str, expr: &ast::Expr, chunk: &mut Chunk, line_no: usize) {
+    fn define_variable(&mut self, name: &str, expr: &ast::Expr, chunk: &mut Chunk, line_no: usize) -> CompilerResult<()> {
         // Check if we're defining a global or local variable
         if self.current_scope == 0 {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
             let global_idx = self.add_constant_string(name, chunk);
 
-            self.compile_expression(expr, chunk);
+            self.compile_expression(expr, chunk)?;
             chunk.write_instruction(OpCode::DefineGlobal, line_no);
             chunk.write_byte(global_idx, line_no);
         } else {
             // Add the local to the compiler's list, and create instructions
             // to put the expression on the stack.
-            self.add_local(name);
-            self.compile_expression(expr, chunk);
+            self.add_local(name)?;
+            self.compile_expression(expr, chunk)?;
             self.locals.last_mut().unwrap().initialized = true;
         }
+
+        Ok(())
     }
 
-    fn get_variable(&mut self, var: &ast::VariableRef, chunk: &mut Chunk, line_no: usize) {
-        match self.find_local(&var.name) {
+    fn get_variable(&mut self, var: &ast::VariableRef, chunk: &mut Chunk, line_no: usize) -> CompilerResult<()> {
+        match self.find_local(&var.name)? {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a GetGlobal instruction.
@@ -190,6 +201,8 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_byte(idx, line_no);
             }
         }
+
+        Ok(())
     }
 
     fn set_variable(
@@ -198,12 +211,12 @@ impl<'vm> Compiler<'vm> {
         expr: &ast::Expr,
         chunk: &mut Chunk,
         line_no: usize,
-    ) {
+    )  -> CompilerResult<()>{
         // In any case, we need to emit instructions to put the result of the
         // expression on the stack.
-        self.compile_expression(expr, chunk);
+        self.compile_expression(expr, chunk)?;
 
-        match self.find_local(&var.name) {
+        match self.find_local(&var.name)? {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a SetGlobal instruction.
@@ -217,6 +230,8 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_byte(idx, line_no);
             }
         }
+
+        Ok(())
     }
 
     // ---- helpers ----
@@ -245,38 +260,40 @@ impl<'vm> Compiler<'vm> {
         }
     }
 
-    fn add_local(&mut self, name: &str) {
+    fn add_local(&mut self, name: &str) -> CompilerResult<()> {
         if self.locals.len() == MAX_LOCALS {
-            panic!("TODO proper errors");
+            return Err(CompilerError::TooManyLocals);
         }
 
         for local in self.locals.iter().rev() {
             if local.scope_depth == self.current_scope && local.name == name {
-                panic!("TODO local already exists in current scope");
+                return Err(CompilerError::LocalAlreadyExists(name.to_owned()));
             }
         }
 
         let new_local = Local {
             name: name.to_owned(),
             scope_depth: self.current_scope,
-            initialized: false, // TODO:???? maybe
+            initialized: false,
         };
         self.locals.push(new_local);
+
+        Ok(())
     }
 
-    fn find_local(&self, name: &str) -> Option<LocalIdx> {
+    fn find_local(&self, name: &str) -> CompilerResult<Option<LocalIdx>> {
         // Walking the array backwards is more efficient, I suppose
         for (idx, local) in self.locals.iter().enumerate().rev() {
             // note: idx is measured from the _bottom_ of the stack
             if local.name == name {
                 if !local.initialized {
-                    panic!("UNINITIALIZED LOL {}", name); // TODO
+                    return Err(CompilerError::LocalUsedInOwnInitializer(name.to_owned()));
                 }
-                return Some(idx as LocalIdx);
+                return Ok(Some(idx as LocalIdx));
             }
         }
 
         // Not found, hopefully it's global.
-        return None;
+        return Ok(None);
     }
 }

@@ -136,7 +136,9 @@ impl Runnable for VM {
         let mut compiler = Compiler::new(self);
 
         let mut bytecode = Chunk::new();
-        compiler.compile(&stmts, &mut bytecode);
+        if let Err(e) = compiler.compile(&stmts, &mut bytecode) {
+            return Err(format!("{:?}", e));
+        }
 
         match self.interpret(&bytecode) {
             Ok(_) => Ok(()),

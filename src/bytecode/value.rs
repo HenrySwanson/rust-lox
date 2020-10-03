@@ -63,7 +63,7 @@ impl PartialEq<HeapObject> for HeapObject {
 impl Eq for HeapObject {}
 
 impl fmt::Debug for HeapObject {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             _ => unreachable!(),
         }
