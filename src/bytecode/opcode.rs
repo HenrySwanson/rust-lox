@@ -20,19 +20,24 @@ pub enum OpCode {
     Equal,
     GreaterThan,
     LessThan,
-    // Other
-    Return,
-    Print,
-    Pop,
+    // Variables
     DefineGlobal,
     GetGlobal,
     SetGlobal,
     GetLocal,
     SetLocal,
+    // Jumps
+    Jump,
+    JumpIfFalse,
+    Loop,
+    // Other
+    Return,
+    Print,
+    Pop,
 }
 
 impl OpCode {
-    pub fn num_operands(&self) -> usize {
+    pub fn arg_size_in_bytes(&self) -> usize {
         match self {
             OpCode::Constant => 1,
             OpCode::True | OpCode::False | OpCode::Nil => 0,
@@ -41,9 +46,10 @@ impl OpCode {
             }
             OpCode::Not => 0,
             OpCode::Equal | OpCode::GreaterThan | OpCode::LessThan => 0,
-            OpCode::Return | OpCode::Print | OpCode::Pop => 0,
             OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => 1,
             OpCode::GetLocal | OpCode::SetLocal => 1,
+            OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => 2,
+            OpCode::Return | OpCode::Print | OpCode::Pop => 0,
         }
     }
 }

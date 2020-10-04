@@ -25,7 +25,9 @@ impl Chunk {
         }
     }
 
-    // TODO: instruction-and-byte write?
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
 
     pub fn write_op(&mut self, op: OpCode, line_no: usize) {
         self.write_u8(op.into(), line_no)
@@ -64,9 +66,37 @@ impl Chunk {
         self.write_u8(byte, line_no);
     }
 
-    pub fn write_instruction_with_u16(&mut self, op: OpCode, short: u16, line_no: usize) {
+    pub fn write_op_with_u16(&mut self, op: OpCode, short: u16, line_no: usize) {
         self.write_op(op, line_no);
         self.write_u16(short, line_no);
+    }
+
+    // instruction-operations that aren't quite "append data to end of code"
+
+    pub fn emit_jump(&mut self, op: OpCode, line_no: usize) -> usize {
+        self.write_op_with_u16(op, 0xffff, line_no);
+        self.code.len() - 2 // -2 so that we return the location of the argument
+    }
+
+    pub fn patch_jump(&mut self, idx: usize) {
+        // distance from (instruction after JMP) to here
+        let jump_distance = self.code.len() - (idx + 2);
+
+        // TODO: better error handling here...
+        let jump_bytes = u16::try_from(jump_distance)
+            .expect("Jump distance too large!")
+            .to_be_bytes();
+
+        self.code[idx] = jump_bytes[0];
+        self.code[idx + 1] = jump_bytes[1];
+    }
+
+    pub fn emit_loop(&mut self, loop_start: usize, line_no: usize) {
+        // distance from (instruction after JMP) to loop_start
+        let jump_distance = (self.code.len() + 3) - loop_start;
+        let jump_distance = u16::try_from(jump_distance).expect("Loop distance too large!");
+
+        self.write_op_with_u16(OpCode::Loop, jump_distance, line_no);
     }
 
     pub fn add_constant(&mut self, constant: Value) -> ConstantIdx {
@@ -136,7 +166,7 @@ impl Chunk {
         match instruction {
             // Constants
             OpCode::Constant => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 let constant = self.read_constant(idx);
                 print_three!("OP_CONSTANT", idx, constant);
             }
@@ -155,34 +185,48 @@ impl Chunk {
             OpCode::Equal => println!("OP_EQUAL"),
             OpCode::GreaterThan => println!("OP_GREATER"),
             OpCode::LessThan => println!("OP_LESS"),
-            // Other
-            OpCode::Print => println!("OP_PRINT"),
-            OpCode::Pop => println!("OP_POP"),
-            OpCode::Return => println!("OP_RETURN"),
+            // Variables
             OpCode::DefineGlobal => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 let constant = self.read_constant(idx);
                 print_three!("OP_DEFINE_GLOBAL", idx, constant);
             }
             OpCode::GetGlobal => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 let constant = self.read_constant(idx);
                 print_three!("OP_GET_GLOBAL", idx, constant);
             }
             OpCode::SetGlobal => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 let constant = self.read_constant(idx);
                 print_three!("OP_SET_GLOBAL", idx, constant);
             }
             OpCode::GetLocal => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 print_two!("OP_GET_LOCAL", idx);
             }
             OpCode::SetLocal => {
-                let idx = self.code[offset + 1];
+                let idx = self.read_u8(offset + 1);
                 print_two!("OP_SET_LOCAL", idx);
             }
+            // Jumps
+            OpCode::Jump => {
+                let distance = self.read_u16(offset + 1);
+                print_two!("OP_JUMP", distance);
+            }
+            OpCode::JumpIfFalse => {
+                let distance = self.read_u16(offset + 1);
+                print_two!("OP_JUMP_IF_FALSE", distance);
+            }
+            OpCode::Loop => {
+                let distance = self.read_u16(offset + 1);
+                print_two!("OP_LOOP", distance);
+            }
+            // Other
+            OpCode::Print => println!("OP_PRINT"),
+            OpCode::Pop => println!("OP_POP"),
+            OpCode::Return => println!("OP_RETURN"),
         };
-        return offset + instruction.num_operands() + 1;
+        return offset + instruction.arg_size_in_bytes() + 1;
     }
 }

@@ -1,5 +1,5 @@
 use crate::common::ast;
-use crate::common::operator::{InfixOperator, PrefixOperator};
+use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use super::chunk::{Chunk, ConstantIdx};
 use super::errs::{CompilerError, CompilerResult};
@@ -63,7 +63,7 @@ impl<'vm> Compiler<'vm> {
                 chunk.write_op(OpCode::Print, line_no);
             }
             ast::StmtKind::VariableDecl(name, expr) => {
-                self.define_variable(name, expr, chunk, line_no)?
+                self.define_variable(name, expr, chunk, line_no)?;
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
@@ -72,8 +72,71 @@ impl<'vm> Compiler<'vm> {
                 }
                 self.end_scope(chunk);
             }
+            ast::StmtKind::IfElse(condition, if_body, else_body) => {
+                self.compile_if_statement(
+                    condition,
+                    if_body.as_ref(),
+                    else_body.as_deref(),
+                    chunk,
+                )?;
+            }
+            ast::StmtKind::While(condition, body) => {
+                self.compile_while_statement(condition, body.as_ref(), chunk)?;
+            }
             _ => panic!("Don't know how to compile that statement yet!"),
         };
+
+        Ok(())
+    }
+
+    fn compile_if_statement(
+        &mut self,
+        condition: &ast::Expr,
+        if_body: &ast::Stmt,
+        else_body: Option<&ast::Stmt>,
+        chunk: &mut Chunk,
+    ) -> CompilerResult<()> {
+        let line_no = condition.span.lo.line_no;
+
+        self.compile_expression(condition, chunk)?;
+
+        // If we pass the jump, pop the condition and do the if-body
+        let jump_to_else = chunk.emit_jump(OpCode::JumpIfFalse, line_no);
+        chunk.write_op(OpCode::Pop, line_no);
+        self.compile_statement(if_body, chunk)?;
+        chunk.patch_jump(jump_to_else);
+
+        // Otherwise, pop the condition now, and do the else body.
+        // Note that we always need an else-jump so that we only ever
+        // pop once.
+        let jump_over_else = chunk.emit_jump(OpCode::Jump, line_no);
+        chunk.write_op(OpCode::Pop, line_no);
+        if let Some(else_body) = else_body {
+            self.compile_statement(else_body, chunk)?;
+        }
+        chunk.patch_jump(jump_over_else);
+
+        Ok(())
+    }
+
+    fn compile_while_statement(
+        &mut self,
+        condition: &ast::Expr,
+        body: &ast::Stmt,
+        chunk: &mut Chunk,
+    ) -> CompilerResult<()> {
+        let line_no = condition.span.lo.line_no;
+        let loop_start = chunk.len();
+
+        self.compile_expression(condition, chunk)?;
+        let exit_jump = chunk.emit_jump(OpCode::JumpIfFalse, line_no);
+        chunk.write_op(OpCode::Pop, line_no);
+
+        self.compile_statement(body, chunk)?;
+        chunk.emit_loop(loop_start, line_no);
+
+        chunk.patch_jump(exit_jump);
+        chunk.write_op(OpCode::Pop, line_no);
 
         Ok(())
     }
@@ -87,6 +150,12 @@ impl<'vm> Compiler<'vm> {
             ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr, chunk)?,
             ast::ExprKind::Variable(var) => self.get_variable(var, chunk, line_no)?,
             ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, chunk, line_no)?,
+            ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => {
+                self.compile_and(lhs, rhs, chunk)?
+            }
+            ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => {
+                self.compile_or(lhs, rhs, chunk)?
+            }
             _ => panic!("Don't know how to compile that expression yet!"),
         };
 
@@ -165,6 +234,43 @@ impl<'vm> Compiler<'vm> {
         };
 
         chunk.write_op(opcode, expr.span.lo.line_no);
+        Ok(())
+    }
+
+    fn compile_and(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        chunk: &mut Chunk,
+    ) -> CompilerResult<()> {
+        self.compile_expression(lhs, chunk)?;
+
+        // lhs is now on the stack; if it's falsey, keep it. otherwise, try the rhs.
+        let jump = chunk.emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
+        chunk.write_op(OpCode::Pop, rhs.span.lo.line_no);
+        self.compile_expression(rhs, chunk)?;
+        chunk.patch_jump(jump);
+
+        Ok(())
+    }
+
+    fn compile_or(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        chunk: &mut Chunk,
+    ) -> CompilerResult<()> {
+        self.compile_expression(lhs, chunk)?;
+
+        // lhs is now on the stack. if it's true, we want to keep it.
+        let skip_jump = chunk.emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
+        let jump_for_true = chunk.emit_jump(OpCode::Jump, lhs.span.lo.line_no);
+        chunk.patch_jump(skip_jump);
+
+        chunk.write_op(OpCode::Pop, rhs.span.lo.line_no);
+        self.compile_expression(rhs, chunk)?;
+        chunk.patch_jump(jump_for_true);
+
         Ok(())
     }
 

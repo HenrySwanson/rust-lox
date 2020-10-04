@@ -62,6 +62,8 @@ impl VM {
                 chunk.disassemble_at(ip);
             }
 
+            let mut jump_to: Option<usize> = None;
+
             let op = match chunk.try_read_op(ip) {
                 Ok(op) => op,
                 Err(byte) => return Err(RuntimeError::InvalidOpcode(byte)),
@@ -123,17 +125,7 @@ impl VM {
                 }
                 OpCode::GreaterThan => self.comparison_binop(|a, b| a > b)?,
                 OpCode::LessThan => self.comparison_binop(|a, b| a < b)?,
-                // Other
-                OpCode::Return => {
-                    return Ok(());
-                }
-                OpCode::Print => {
-                    let value = self.pop()?;
-                    println!("[out] {:?}", value);
-                }
-                OpCode::Pop => {
-                    self.pop()?;
-                }
+                // Variables
                 OpCode::DefineGlobal => {
                     let name = self.read_string(chunk, ip + 1);
                     let value = self.pop()?;
@@ -170,9 +162,39 @@ impl VM {
                     let idx = chunk.read_u8(ip + 1);
                     self.stack[idx as usize] = value;
                 }
+                // Jumps
+                OpCode::Jump => {
+                    let jump_by = usize::from(chunk.read_u16(ip + 1));
+                    jump_to = Some(ip + 3 + jump_by); // starts at end of the jump instruction
+                }
+                OpCode::JumpIfFalse => {
+                    if !self.peek(0)?.is_truthy() {
+                        let jump_by = usize::from(chunk.read_u16(ip + 1));
+                        jump_to = Some(ip + 3 + jump_by); // starts at end of the jump instruction
+                    }
+                }
+                OpCode::Loop => {
+                    let jump_by = usize::from(chunk.read_u16(ip + 1));
+                    jump_to = Some(ip + 3 - jump_by); // starts at end of the jump instruction
+                }
+                // Other
+                OpCode::Return => {
+                    return Ok(());
+                }
+                OpCode::Print => {
+                    let value = self.pop()?;
+                    println!("[out] {:?}", value);
+                }
+                OpCode::Pop => {
+                    self.pop()?;
+                }
             }
 
-            ip += op.num_operands() + 1;
+            // How to advance the IP? Check jump_to.
+            ip = match jump_to {
+                Some(n) => n,
+                None => ip + op.arg_size_in_bytes() + 1, // +1 for the op itself
+            }
         }
     }
 
