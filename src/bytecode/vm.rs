@@ -7,9 +7,6 @@ use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{HeapObject, Value};
 
-// TODO can this be converted into a build option?
-const DEBUG_TRACE_EXECUTION: bool = false;
-
 struct CallFrame {
     ip: usize,
     base_ptr: usize,
@@ -69,10 +66,13 @@ impl VM {
             let ip = self.frame().ip;
             let base_ptr = self.frame().base_ptr;
 
-            if DEBUG_TRACE_EXECUTION {
+            #[cfg(feature = "trace-execution")]
+            {
                 println!("STACK     {:?}", self.stack);
-                println!("frame ptr = {}", self.frame().base_ptr);
-                println!("ip = {}", self.frame().ip);
+                println!(
+                    "IP = {}, BP = {} ({:?})",
+                    ip, base_ptr, self.stack[base_ptr]
+                );
                 self.chunk().disassemble_at(ip);
                 println!();
             }

@@ -10,8 +10,6 @@ use super::opcode::OpCode;
 use super::value::{HeapObject, LoxFunctionData, Value};
 use super::vm::VM;
 
-const DEBUG_PRINT_CODE: bool = true;
-
 // since the GET_LOCAL instruction takes a byte
 const MAX_LOCALS: usize = 256;
 type LocalIdx = u8;
@@ -70,9 +68,7 @@ impl<'vm> Compiler<'vm> {
         // Return, to exit the VM
         self.current_chunk().write_op(OpCode::Return, 0);
 
-        if DEBUG_PRINT_CODE {
-            self.current_chunk().disassemble("code");
-        }
+        self.print_chunk("<main>"); // for debugging
 
         // Define the implicit main function
         let root_state = self.context_stack.pop().expect("Context stack empty!");
@@ -214,6 +210,8 @@ impl<'vm> Compiler<'vm> {
             .write_op(OpCode::Return, fn_decl.body.span.hi.line_no);
 
         // no need to end scope, we're just killing this compiler context completely
+
+        self.print_chunk(&fn_decl.name); // for debugging
 
         // Build the function data
         let ctx = self.context_stack.pop().expect("Context stack empty!");
@@ -532,5 +530,12 @@ impl<'vm> Compiler<'vm> {
 
     fn mark_last_local_initialized(&mut self) {
         self.get_ctx_mut().locals.last_mut().unwrap().initialized = true;
+    }
+
+    fn print_chunk(&mut self, name: &str) {
+        // TODO no reason this needs to be mut, except that current_chunk has
+        // no mut version
+        #[cfg(feature = "print-chunks")]
+        self.current_chunk().disassemble("<main>");
     }
 }

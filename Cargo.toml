@@ -9,3 +9,7 @@ edition = "2018"
 [dependencies]
 more-asserts = "*"
 num_enum = "*"
+
+[features]
+trace-execution = []
+print-chunks = []
