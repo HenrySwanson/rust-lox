@@ -162,7 +162,7 @@ impl VM {
                     self.push(value);
                 }
                 OpCode::SetLocal => {
-                    let value = self.pop()?;
+                    let value = self.peek(0)?;
                     let idx = self.read_u8() as usize;
                     self.stack[base_ptr + idx] = value;
                 }
