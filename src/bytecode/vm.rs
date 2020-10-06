@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::chunk::Chunk;
+use super::chunk::{Chunk, ConstantIdx};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
@@ -20,6 +20,7 @@ struct CallFrame {
 pub struct VM {
     call_stack: Vec<CallFrame>,
     stack: Vec<Value>,
+
     heap: GcHeap<HeapObject>,
     string_table: StringInterner,
     globals: HashMap<InternedString, Value>,
@@ -36,43 +37,16 @@ impl VM {
         }
     }
 
-    fn push(&mut self, value: Value) {
-        self.stack.push(value);
-    }
-
-    fn pop(&mut self) -> RuntimeResult<Value> {
-        self.stack.pop().ok_or(RuntimeError::StackEmpty)
-    }
-
-    fn peek(&self, depth: usize) -> RuntimeResult<Value> {
-        let stack_size = self.stack.len();
-        self.stack
-            .get(stack_size - 1 - depth)
-            .cloned()
-            .ok_or(RuntimeError::InvalidStackIndex)
-    }
-
-    pub fn intern_string(&mut self, s: &str) -> InternedString {
-        self.string_table.get_interned(s)
-    }
-
-    pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
-        self.heap.insert(obj)
-    }
-
     pub fn interpret(&mut self, main_fn: GcStrong<HeapObject>) -> RuntimeResult<()> {
-        // TODO reset stack and call_stack
+        // Reset computational state
+        self.call_stack.clear();
+        self.stack.clear();
 
         // Make main() a real value and push it onto the stack
         self.push(Value::Obj(main_fn.downgrade()));
 
         // Make a frame for the invocation of main()
-        // TODO extract?
-        self.call_stack.push(CallFrame {
-            ip: 0,
-            base_ptr: 0,
-            callable: main_fn,
-        });
+        self.push_new_frame(0, main_fn);
 
         // TODO print stack trace on failure
         self.run()
@@ -91,9 +65,7 @@ impl VM {
                 println!("");
             }
 
-            let mut jump_to: Option<usize> = None;
-
-            let op = match self.chunk().try_read_op(ip) {
+            let op = match self.try_read_op() {
                 Ok(op) => op,
                 Err(byte) => return Err(RuntimeError::InvalidOpcode(byte)),
             };
@@ -101,27 +73,15 @@ impl VM {
             match op {
                 // Constants
                 OpCode::Constant => {
-                    let idx = self.chunk().read_u8(ip + 1);
-                    let constant = self.chunk().read_constant(idx);
+                    let idx = self.read_u8();
+                    let constant = self.chunk().lookup_constant(idx);
                     self.push(constant);
                 }
                 OpCode::True => self.push(Value::Boolean(true)),
                 OpCode::False => self.push(Value::Boolean(false)),
                 OpCode::Nil => self.push(Value::Nil),
                 // Arithmetic
-                OpCode::Add => {
-                    let lhs = self.peek(1)?;
-                    let rhs = self.peek(0)?;
-
-                    let new_object = match self.try_add(lhs, rhs) {
-                        Some(obj) => obj,
-                        None => return Err(RuntimeError::IncorrectOperandType),
-                    };
-
-                    self.pop()?;
-                    self.pop()?;
-                    self.push(new_object);
-                }
+                OpCode::Add => self.do_add()?,
                 OpCode::Subtract => self.arithmetic_binop(|a, b| a - b)?,
                 OpCode::Multiply => self.arithmetic_binop(|a, b| a * b)?,
                 OpCode::Divide => {
@@ -156,12 +116,14 @@ impl VM {
                 OpCode::LessThan => self.comparison_binop(|a, b| a < b)?,
                 // Variables
                 OpCode::DefineGlobal => {
-                    let name = self.read_string(ip + 1);
+                    let idx = self.read_u8();
+                    let name = self.lookup_string(idx);
                     let value = self.pop()?;
                     self.globals.insert(name, value);
                 }
                 OpCode::GetGlobal => {
-                    let name = self.read_string(ip + 1);
+                    let idx = self.read_u8();
+                    let name = self.lookup_string(idx);
                     let value = match self.globals.get(&name) {
                         Some(value) => value.clone(),
                         None => {
@@ -172,7 +134,8 @@ impl VM {
                     self.push(value);
                 }
                 OpCode::SetGlobal => {
-                    let name = self.read_string(ip + 1);
+                    let idx = self.read_u8();
+                    let name = self.lookup_string(idx);
                     if !self.globals.contains_key(&name) {
                         let name: String = (*name).to_owned();
                         return Err(RuntimeError::UndefinedGlobal(name));
@@ -182,41 +145,40 @@ impl VM {
                     self.globals.insert(name, value);
                 }
                 OpCode::GetLocal => {
-                    let idx = self.chunk().read_u8(ip + 1) as usize;
+                    let idx = self.read_u8() as usize;
                     let value = self.stack[base_ptr + idx].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
                     let value = self.pop()?;
-                    let idx = self.chunk().read_u8(ip + 1) as usize;
+                    let idx = self.read_u8() as usize;
                     self.stack[base_ptr + idx] = value;
                 }
                 // Jumps
                 OpCode::Jump => {
-                    let jump_by = usize::from(self.chunk().read_u16(ip + 1));
-                    jump_to = Some(ip + 3 + jump_by); // starts at end of the jump instruction
+                    let jump_by = usize::from(self.read_u16());
+                    self.frame_mut().ip += jump_by;
                 }
                 OpCode::JumpIfFalse => {
+                    let jump_by = usize::from(self.read_u16());
                     if !self.peek(0)?.is_truthy() {
-                        let jump_by = usize::from(self.chunk().read_u16(ip + 1));
-                        jump_to = Some(ip + 3 + jump_by); // starts at end of the jump instruction
+                        self.frame_mut().ip += jump_by;
                     }
                 }
                 OpCode::Loop => {
-                    let jump_by = usize::from(self.chunk().read_u16(ip + 1));
-                    jump_to = Some(ip + 3 - jump_by); // starts at end of the jump instruction
+                    let jump_by = usize::from(self.read_u16());
+                    self.frame_mut().ip -= jump_by;
                 }
                 // Other
                 OpCode::Call => {
-                    let arg_count: usize = self.chunk().read_u8(ip + 1).into();
+                    let arg_count: usize = self.read_u8().into();
 
                     // Fetch the object in the appropriate stack slot
-                    let frame_start = self.stack.len() - (arg_count + 1);
-                    let heap_obj_ptr = match &self.stack[frame_start] {
+                    let callable_ptr = match &self.peek(arg_count)? {
                         Value::Obj(gc_ptr) => gc_ptr.clone(),
                         _ => return Err(RuntimeError::NotACallable), // only callable objects are on the heap
                     };
-                    let fn_data = match self.heap.get(&heap_obj_ptr) {
+                    let fn_data = match self.heap.get(&callable_ptr) {
                         HeapObject::LoxFunction(fn_data) => fn_data,
                     };
 
@@ -225,27 +187,12 @@ impl VM {
                         return Err(RuntimeError::WrongArity);
                     }
 
-                    // Alright, we're ready to call the function. But before we do that, let's
-                    // set the return address (i.e., frame.ip of the current frame) correctly.
-                    self.frame_mut().ip += 2;
-
-                    let frame = CallFrame {
-                        ip: 0,
-                        base_ptr: frame_start,
-                        callable: self.heap.upgrade(heap_obj_ptr), // roots the function obj
-                    };
-                    self.call_stack.push(frame);
-
-                    // Don't advance ip
-                    jump_to = Some(self.frame().ip);
+                    // Alright, we're ready to call the function.
+                    self.push_new_frame(arg_count, self.heap.upgrade(callable_ptr));
                 }
                 OpCode::Return => {
                     // Rescue the return value off the stack
-                    let result = self.pop()?;
-                    let frame = self.call_stack.pop().expect("Call stack empty!");
-
-                    // Clear everything above and including the most recent frame ptr
-                    self.stack.truncate(frame.base_ptr);
+                    let result = self.pop_frame()?;
 
                     // Now check if there are any frames left
                     if self.call_stack.len() == 0 {
@@ -253,9 +200,6 @@ impl VM {
                     } else {
                         self.push(result);
                     }
-
-                    // Don't advance ip
-                    jump_to = Some(self.frame().ip);
                 }
                 OpCode::Print => {
                     let value = self.pop()?;
@@ -264,12 +208,6 @@ impl VM {
                 OpCode::Pop => {
                     self.pop()?;
                 }
-            }
-
-            // How to advance the IP? Check jump_to.
-            self.frame_mut().ip = match jump_to {
-                Some(n) => n,
-                None => ip + op.arg_size_in_bytes() + 1, // +1 for the op itself
             }
         }
     }
@@ -298,7 +236,77 @@ impl VM {
         }
     }
 
-    fn try_add(&mut self, lhs: Value, rhs: Value) -> Option<Value> {
+    fn read_u8(&mut self) -> u8 {
+        let ip = self.frame_mut().ip;
+        let byte = self.chunk().read_u8(ip);
+        self.frame_mut().ip += 1;
+        byte
+    }
+
+    fn read_u16(&mut self) -> u16 {
+        let ip = self.frame_mut().ip;
+        let short = self.chunk().read_u16(ip);
+        self.frame_mut().ip += 2;
+        short
+    }
+
+    fn try_read_op(&mut self) -> Result<OpCode, u8> {
+        let ip = self.frame_mut().ip;
+        let result = self.chunk().try_read_op(ip);
+        self.frame_mut().ip += 1;
+        result
+    }
+
+    fn push_new_frame(&mut self, arg_count: usize, callable: GcStrong<HeapObject>) {
+        let new_frame = CallFrame {
+            ip: 0,
+            base_ptr: self.stack.len() - (arg_count + 1),
+            callable: callable,
+        };
+        self.call_stack.push(new_frame);
+    }
+
+    fn pop_frame(&mut self) -> RuntimeResult<Value> {
+        // Rescue the return value off the stack
+        let result = self.pop()?;
+        let frame = self.call_stack.pop().expect("Call stack empty!");
+
+        // Clear everything above and including the most recent frame ptr
+        self.stack.truncate(frame.base_ptr);
+
+        Ok(result)
+    }
+
+    fn push(&mut self, value: Value) {
+        self.stack.push(value);
+    }
+
+    fn pop(&mut self) -> RuntimeResult<Value> {
+        self.stack.pop().ok_or(RuntimeError::StackEmpty)
+    }
+
+    fn peek(&self, depth: usize) -> RuntimeResult<Value> {
+        let stack_size = self.stack.len();
+        self.stack
+            .get(stack_size - 1 - depth)
+            .cloned()
+            .ok_or(RuntimeError::InvalidStackIndex)
+    }
+
+    pub fn intern_string(&mut self, s: &str) -> InternedString {
+        self.string_table.get_interned(s)
+    }
+
+    pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
+        self.heap.insert(obj)
+    }
+
+    // -- other helpers --
+
+    fn do_add(&mut self) -> RuntimeResult<()> {
+        let lhs = self.peek(1)?;
+        let rhs = self.peek(0)?;
+
         let value = match (lhs, rhs) {
             (Value::Number(n), Value::Number(m)) => Value::Number(n + m),
             (Value::String(s), Value::String(t)) => {
@@ -307,10 +315,14 @@ impl VM {
                 let interned = self.string_table.get_interned(new_string);
                 Value::String(interned)
             }
-            _ => return None,
+            _ => return Err(RuntimeError::IncorrectOperandType),
         };
 
-        Some(value)
+        self.pop()?;
+        self.pop()?;
+        self.push(value);
+
+        Ok(())
     }
 
     fn numerical_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
@@ -346,9 +358,9 @@ impl VM {
         self.numerical_binop(|a, b| Value::Boolean(closure(a, b)))
     }
 
-    fn read_string(&self, idx: usize) -> InternedString {
+    fn lookup_string(&self, idx: ConstantIdx) -> InternedString {
         let chunk = &self.chunk();
-        match chunk.read_constant(chunk.read_u8(idx)) {
+        match chunk.lookup_constant(idx) {
             Value::String(s) => s,
             _ => panic!("Global table contains non-string"),
         }

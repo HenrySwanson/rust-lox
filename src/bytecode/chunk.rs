@@ -116,7 +116,7 @@ impl Chunk {
         return idx;
     }
 
-    pub fn read_constant(&self, idx: ConstantIdx) -> Value {
+    pub fn lookup_constant(&self, idx: ConstantIdx) -> Value {
         self.constants[idx as usize].clone()
     }
 
@@ -164,7 +164,7 @@ impl Chunk {
             // Constants
             OpCode::Constant => {
                 let idx = self.read_u8(offset + 1);
-                let constant = self.read_constant(idx);
+                let constant = self.lookup_constant(idx);
                 print_three!("OP_CONSTANT", idx, constant);
             }
             OpCode::True => println!("OP_TRUE"),
@@ -185,17 +185,17 @@ impl Chunk {
             // Variables
             OpCode::DefineGlobal => {
                 let idx = self.read_u8(offset + 1);
-                let constant = self.read_constant(idx);
+                let constant = self.lookup_constant(idx);
                 print_three!("OP_DEFINE_GLOBAL", idx, constant);
             }
             OpCode::GetGlobal => {
                 let idx = self.read_u8(offset + 1);
-                let constant = self.read_constant(idx);
+                let constant = self.lookup_constant(idx);
                 print_three!("OP_GET_GLOBAL", idx, constant);
             }
             OpCode::SetGlobal => {
                 let idx = self.read_u8(offset + 1);
-                let constant = self.read_constant(idx);
+                let constant = self.lookup_constant(idx);
                 print_three!("OP_SET_GLOBAL", idx, constant);
             }
             OpCode::GetLocal => {

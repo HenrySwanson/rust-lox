@@ -36,10 +36,15 @@ pub struct Compiler<'vm> {
 }
 
 impl Context {
-    fn new() -> Self {
+    fn new(reserved_id: &str) -> Self {
+        let reserved_local = Local {
+            name: reserved_id.to_owned(),
+            scope_depth: 0,
+            initialized: false, // doesn't matter
+        };
         Context {
             chunk: Chunk::new(),
-            locals: vec![],
+            locals: vec![reserved_local],
             scope_depth: 0,
         }
     }
@@ -55,9 +60,8 @@ impl<'vm> Compiler<'vm> {
     }
 
     pub fn compile(&mut self, stmts: &Vec<ast::Stmt>) -> CompilerResult<GcStrong<HeapObject>> {
-        // Put in a fresh context, and reserve the first slot
-        self.context_stack.push(Context::new());
-        self.add_local("")?;
+        // Put in a fresh context
+        self.context_stack.push(Context::new(""));
 
         for stmt in stmts.iter() {
             self.compile_statement(stmt)?;
@@ -192,11 +196,8 @@ impl<'vm> Compiler<'vm> {
         }
 
         // Create the new compiler context
-        self.context_stack.push(Context::new());
+        self.context_stack.push(Context::new(""));
         self.begin_scope();
-
-        // Claim slot #0 for yourself
-        self.add_local("")?; // TODO there's gotta be a better way
 
         // Declare+define the arguments
         for param in fn_decl.params.iter() {
