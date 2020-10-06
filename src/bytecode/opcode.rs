@@ -31,6 +31,7 @@ pub enum OpCode {
     JumpIfFalse,
     Loop,
     // Other
+    Call,
     Return,
     Print,
     Pop,
@@ -49,6 +50,7 @@ impl OpCode {
             OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => 1,
             OpCode::GetLocal | OpCode::SetLocal => 1,
             OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => 2,
+            OpCode::Call => 1,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
         }
     }

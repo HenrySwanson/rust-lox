@@ -1,10 +1,13 @@
+use std::convert::TryFrom;
+
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use super::chunk::{Chunk, ConstantIdx};
 use super::errs::{CompilerError, CompilerResult};
+use super::gc::GcStrong;
 use super::opcode::OpCode;
-use super::value::Value;
+use super::value::{HeapObject, LoxFunctionData, Value};
 use super::vm::VM;
 
 const DEBUG_PRINT_CODE: bool = true;
@@ -19,12 +22,27 @@ struct Local {
     initialized: bool,
 }
 
+struct Context {
+    chunk: Chunk,
+    locals: Vec<Local>,
+    scope_depth: u32,
+}
+
 pub struct Compiler<'vm> {
     // We need to be able to access the VM so we can stuff objects into
     // into the heap. For example, the string "cat" in `var a = "cat"`.
     vm_ref: &'vm mut VM,
-    locals: Vec<Local>,
-    current_scope: u32,
+    context_stack: Vec<Context>,
+}
+
+impl Context {
+    fn new() -> Self {
+        Context {
+            chunk: Chunk::new(),
+            locals: vec![],
+            scope_depth: 0,
+        }
+    }
 }
 
 // TODO: kill all the panics
@@ -32,56 +50,78 @@ impl<'vm> Compiler<'vm> {
     pub fn new(vm_ref: &'vm mut VM) -> Self {
         Compiler {
             vm_ref,
-            locals: vec![],
-            current_scope: 0,
+            context_stack: vec![],
         }
     }
 
-    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>, chunk: &mut Chunk) -> CompilerResult<()> {
+    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>) -> CompilerResult<GcStrong<HeapObject>> {
+        // Put in a fresh context, and reserve the first slot
+        self.context_stack.push(Context::new());
+        self.add_local("")?;
+
         for stmt in stmts.iter() {
-            self.compile_statement(stmt, chunk)?;
+            self.compile_statement(stmt)?;
         }
 
         // Return, to exit the VM
-        chunk.write_op(OpCode::Return, 0);
+        self.current_chunk().write_op(OpCode::Return, 0);
 
         if DEBUG_PRINT_CODE {
-            chunk.disassemble("code");
+            self.current_chunk().disassemble("code");
         }
-        Ok(())
+
+        // Define the implicit main function
+        let root_state = self.context_stack.pop().expect("Context stack empty!");
+        let fn_data =
+            LoxFunctionData::new(self.vm_ref.intern_string("<main>"), 0, root_state.chunk);
+        let main_fn_handle = self
+            .vm_ref
+            .insert_into_heap(HeapObject::LoxFunction(fn_data));
+        Ok(main_fn_handle)
     }
 
-    pub fn compile_statement(&mut self, stmt: &ast::Stmt, chunk: &mut Chunk) -> CompilerResult<()> {
+    pub fn compile_statement(&mut self, stmt: &ast::Stmt) -> CompilerResult<()> {
         let line_no = stmt.span.lo.line_no;
         match &stmt.kind {
             ast::StmtKind::Expression(expr) => {
-                self.compile_expression(expr, chunk)?;
-                chunk.write_op(OpCode::Pop, line_no);
+                self.compile_expression(expr)?;
+                self.current_chunk().write_op(OpCode::Pop, line_no);
             }
             ast::StmtKind::Print(expr) => {
-                self.compile_expression(expr, chunk)?;
-                chunk.write_op(OpCode::Print, line_no);
+                self.compile_expression(expr)?;
+                self.current_chunk().write_op(OpCode::Print, line_no);
             }
             ast::StmtKind::VariableDecl(name, expr) => {
-                self.define_variable(name, expr, chunk, line_no)?;
+                // Create instructions to put the value of expr on top of the stack
+                self.compile_expression(expr)?;
+
+                self.declare_variable(name)?;
+                self.define_variable(name, line_no)?;
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
                 for stmt in stmts.iter() {
-                    self.compile_statement(stmt, chunk)?;
+                    self.compile_statement(stmt)?;
                 }
-                self.end_scope(chunk);
+                self.end_scope();
             }
             ast::StmtKind::IfElse(condition, if_body, else_body) => {
-                self.compile_if_statement(
-                    condition,
-                    if_body.as_ref(),
-                    else_body.as_deref(),
-                    chunk,
-                )?;
+                self.compile_if_statement(condition, if_body.as_ref(), else_body.as_deref())?;
             }
             ast::StmtKind::While(condition, body) => {
-                self.compile_while_statement(condition, body.as_ref(), chunk)?;
+                self.compile_while_statement(condition, body.as_ref())?;
+            }
+            ast::StmtKind::FunctionDecl(fn_decl) => {
+                self.compile_function_decl(fn_decl, line_no)?;
+            }
+            ast::StmtKind::Return(expr) => {
+                match expr {
+                    Some(expr) => {
+                        self.compile_expression(expr)?;
+                    }
+                    None => self.current_chunk().write_op(OpCode::Nil, line_no),
+                }
+                self.current_chunk().write_op(OpCode::Return, line_no);
             }
             _ => panic!("Don't know how to compile that statement yet!"),
         };
@@ -94,27 +134,26 @@ impl<'vm> Compiler<'vm> {
         condition: &ast::Expr,
         if_body: &ast::Stmt,
         else_body: Option<&ast::Stmt>,
-        chunk: &mut Chunk,
     ) -> CompilerResult<()> {
         let line_no = condition.span.lo.line_no;
 
-        self.compile_expression(condition, chunk)?;
+        self.compile_expression(condition)?;
 
         // If we pass the jump, pop the condition and do the if-body
-        let jump_to_else = chunk.emit_jump(OpCode::JumpIfFalse, line_no);
-        chunk.write_op(OpCode::Pop, line_no);
-        self.compile_statement(if_body, chunk)?;
-        chunk.patch_jump(jump_to_else);
+        let jump_to_else = self.current_chunk().emit_jump(OpCode::JumpIfFalse, line_no);
+        self.current_chunk().write_op(OpCode::Pop, line_no);
+        self.compile_statement(if_body)?;
 
         // Otherwise, pop the condition now, and do the else body.
         // Note that we always need an else-jump so that we only ever
         // pop once.
-        let jump_over_else = chunk.emit_jump(OpCode::Jump, line_no);
-        chunk.write_op(OpCode::Pop, line_no);
+        let jump_over_else = self.current_chunk().emit_jump(OpCode::Jump, line_no);
+        self.current_chunk().patch_jump(jump_to_else);
+        self.current_chunk().write_op(OpCode::Pop, line_no);
         if let Some(else_body) = else_body {
-            self.compile_statement(else_body, chunk)?;
+            self.compile_statement(else_body)?;
         }
-        chunk.patch_jump(jump_over_else);
+        self.current_chunk().patch_jump(jump_over_else);
 
         Ok(())
     }
@@ -123,38 +162,99 @@ impl<'vm> Compiler<'vm> {
         &mut self,
         condition: &ast::Expr,
         body: &ast::Stmt,
-        chunk: &mut Chunk,
     ) -> CompilerResult<()> {
         let line_no = condition.span.lo.line_no;
-        let loop_start = chunk.len();
+        let loop_start = self.current_chunk().len();
 
-        self.compile_expression(condition, chunk)?;
-        let exit_jump = chunk.emit_jump(OpCode::JumpIfFalse, line_no);
-        chunk.write_op(OpCode::Pop, line_no);
+        self.compile_expression(condition)?;
+        let exit_jump = self.current_chunk().emit_jump(OpCode::JumpIfFalse, line_no);
+        self.current_chunk().write_op(OpCode::Pop, line_no);
 
-        self.compile_statement(body, chunk)?;
-        chunk.emit_loop(loop_start, line_no);
+        self.compile_statement(body)?;
+        self.current_chunk().emit_loop(loop_start, line_no);
 
-        chunk.patch_jump(exit_jump);
-        chunk.write_op(OpCode::Pop, line_no);
+        self.current_chunk().patch_jump(exit_jump);
+        self.current_chunk().write_op(OpCode::Pop, line_no);
 
         Ok(())
     }
 
-    fn compile_expression(&mut self, expr: &ast::Expr, chunk: &mut Chunk) -> CompilerResult<()> {
+    fn compile_function_decl(
+        &mut self,
+        fn_decl: &ast::FunctionDecl,
+        line_no: usize,
+    ) -> CompilerResult<()> {
+        // Functions are allowed to refer to themselves; create a local with the
+        // appropriate name before actually compiling the function.
+        self.declare_variable(&fn_decl.name)?;
+        if self.get_ctx().scope_depth != 0 {
+            self.mark_last_local_initialized();
+        }
+
+        // Create the new compiler context
+        self.context_stack.push(Context::new());
+        self.begin_scope();
+
+        // Claim slot #0 for yourself
+        self.add_local("")?; // TODO there's gotta be a better way
+
+        // Declare+define the arguments
+        for param in fn_decl.params.iter() {
+            // Unlike normal local variables, we don't compile any expressions here
+            self.declare_variable(param)?;
+            self.define_variable(param, line_no)?;
+        }
+
+        // Compile the function body, and add an implicit return
+        self.compile_statement(fn_decl.body.as_ref())?;
+        self.current_chunk()
+            .write_op(OpCode::Nil, fn_decl.body.span.hi.line_no);
+        self.current_chunk()
+            .write_op(OpCode::Return, fn_decl.body.span.hi.line_no);
+
+        // no need to end scope, we're just killing this compiler context completely
+
+        // Build the function data
+        let ctx = self.context_stack.pop().expect("Context stack empty!");
+        let interned_name = self.vm_ref.intern_string(&fn_decl.name);
+        let fn_data = LoxFunctionData::new(interned_name, fn_decl.params.len(), ctx.chunk);
+
+        // Create the function object and stash it in the chunk
+        let obj = self
+            .vm_ref
+            .insert_into_heap(HeapObject::LoxFunction(fn_data));
+        let idx = self.current_chunk().add_heap_constant(obj);
+        self.current_chunk()
+            .write_op_with_u8(OpCode::Constant, idx, line_no);
+
+        // Put it into the variable
+        self.define_variable(&fn_decl.name, line_no)?;
+
+        Ok(())
+    }
+
+    fn compile_expression(&mut self, expr: &ast::Expr) -> CompilerResult<()> {
         // stack effect: puts value on top of the stack
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
-            ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no, chunk),
-            ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, chunk)?,
-            ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr, chunk)?,
-            ast::ExprKind::Variable(var) => self.get_variable(var, chunk, line_no)?,
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, chunk, line_no)?,
-            ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => {
-                self.compile_and(lhs, rhs, chunk)?
-            }
-            ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => {
-                self.compile_or(lhs, rhs, chunk)?
+            ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no),
+            ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
+            ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr)?,
+            ast::ExprKind::Variable(var) => self.get_variable(var, line_no)?,
+            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, line_no)?,
+            ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => self.compile_and(lhs, rhs)?,
+            ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => self.compile_or(lhs, rhs)?,
+            ast::ExprKind::Call(callee, args) => {
+                // Put the callee and its args on the stack, in order
+                self.compile_expression(callee.as_ref())?;
+                for arg in args.iter() {
+                    self.compile_expression(arg)?;
+                }
+                self.current_chunk().write_op_with_u8(
+                    OpCode::Call,
+                    u8::try_from(args.len()).expect("Too many arguments in AST"),
+                    line_no,
+                );
             }
             _ => panic!("Don't know how to compile that expression yet!"),
         };
@@ -162,24 +262,26 @@ impl<'vm> Compiler<'vm> {
         Ok(())
     }
 
-    fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize, chunk: &mut Chunk) {
+    fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize) {
         match literal {
             ast::Literal::Number(n) => {
                 let value = Value::Number((*n).into());
-                let idx = chunk.add_constant(value);
-                chunk.write_op_with_u8(OpCode::Constant, idx, line_no);
+                let idx = self.current_chunk().add_constant(value);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::Constant, idx, line_no);
             }
             ast::Literal::Boolean(b) => {
                 let opcode = if *b { OpCode::True } else { OpCode::False };
-                chunk.write_op(opcode, line_no);
+                self.current_chunk().write_op(opcode, line_no);
             }
             ast::Literal::Str(s) => {
-                let idx = self.add_constant_string(s, chunk);
-
-                chunk.write_op_with_u8(OpCode::Constant, idx, line_no);
+                let value = Value::String(self.vm_ref.intern_string(s));
+                let idx = self.current_chunk().add_constant(value);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::Constant, idx, line_no);
             }
             ast::Literal::Nil => {
-                chunk.write_op(OpCode::Nil, line_no);
+                self.current_chunk().write_op(OpCode::Nil, line_no);
             }
         }
     }
@@ -189,13 +291,13 @@ impl<'vm> Compiler<'vm> {
         op: InfixOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
-        chunk: &mut Chunk,
     ) -> CompilerResult<()> {
         let line_no = lhs.span.hi.line_no; // I guess??
 
-        self.compile_expression(lhs, chunk)?;
-        self.compile_expression(rhs, chunk)?;
+        self.compile_expression(lhs)?;
+        self.compile_expression(rhs)?;
 
+        let chunk = self.current_chunk();
         match op {
             InfixOperator::Add => chunk.write_op(OpCode::Add, line_no),
             InfixOperator::Subtract => chunk.write_op(OpCode::Subtract, line_no),
@@ -221,101 +323,94 @@ impl<'vm> Compiler<'vm> {
         Ok(())
     }
 
-    fn compile_prefix(
-        &mut self,
-        op: PrefixOperator,
-        expr: &ast::Expr,
-        chunk: &mut Chunk,
-    ) -> CompilerResult<()> {
-        self.compile_expression(expr, chunk)?;
+    fn compile_prefix(&mut self, op: PrefixOperator, expr: &ast::Expr) -> CompilerResult<()> {
+        self.compile_expression(expr)?;
         let opcode = match op {
             PrefixOperator::Negate => OpCode::Negate,
             PrefixOperator::LogicalNot => OpCode::Not,
         };
 
-        chunk.write_op(opcode, expr.span.lo.line_no);
+        self.current_chunk().write_op(opcode, expr.span.lo.line_no);
         Ok(())
     }
 
-    fn compile_and(
-        &mut self,
-        lhs: &ast::Expr,
-        rhs: &ast::Expr,
-        chunk: &mut Chunk,
-    ) -> CompilerResult<()> {
-        self.compile_expression(lhs, chunk)?;
+    fn compile_and(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> CompilerResult<()> {
+        self.compile_expression(lhs)?;
 
         // lhs is now on the stack; if it's falsey, keep it. otherwise, try the rhs.
-        let jump = chunk.emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
-        chunk.write_op(OpCode::Pop, rhs.span.lo.line_no);
-        self.compile_expression(rhs, chunk)?;
-        chunk.patch_jump(jump);
+        let jump = self
+            .current_chunk()
+            .emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
+        self.current_chunk()
+            .write_op(OpCode::Pop, rhs.span.lo.line_no);
+        self.compile_expression(rhs)?;
+        self.current_chunk().patch_jump(jump);
 
         Ok(())
     }
 
-    fn compile_or(
-        &mut self,
-        lhs: &ast::Expr,
-        rhs: &ast::Expr,
-        chunk: &mut Chunk,
-    ) -> CompilerResult<()> {
-        self.compile_expression(lhs, chunk)?;
+    fn compile_or(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> CompilerResult<()> {
+        self.compile_expression(lhs)?;
 
         // lhs is now on the stack. if it's true, we want to keep it.
-        let skip_jump = chunk.emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
-        let jump_for_true = chunk.emit_jump(OpCode::Jump, lhs.span.lo.line_no);
-        chunk.patch_jump(skip_jump);
+        let skip_jump = self
+            .current_chunk()
+            .emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
+        let jump_for_true = self
+            .current_chunk()
+            .emit_jump(OpCode::Jump, lhs.span.lo.line_no);
+        self.current_chunk().patch_jump(skip_jump);
 
-        chunk.write_op(OpCode::Pop, rhs.span.lo.line_no);
-        self.compile_expression(rhs, chunk)?;
-        chunk.patch_jump(jump_for_true);
+        self.current_chunk()
+            .write_op(OpCode::Pop, rhs.span.lo.line_no);
+        self.compile_expression(rhs)?;
+        self.current_chunk().patch_jump(jump_for_true);
 
         Ok(())
     }
 
-    fn define_variable(
-        &mut self,
-        name: &str,
-        expr: &ast::Expr,
-        chunk: &mut Chunk,
-        line_no: usize,
-    ) -> CompilerResult<()> {
-        // Check if we're defining a global or local variable
-        if self.current_scope == 0 {
-            // We store the name of the global as a string constant, so the VM can
-            // keep track of it.
-            let global_idx = self.add_constant_string(name, chunk);
-
-            self.compile_expression(expr, chunk)?;
-            chunk.write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
+    fn declare_variable(&mut self, name: &str) -> CompilerResult<()> {
+        // Check if we're declaring a global or local variable
+        if self.get_ctx().scope_depth == 0 {
+            // nothing to do
         } else {
-            // Add the local to the compiler's list, and create instructions
-            // to put the expression on the stack.
+            // Add the local to the compiler's list.
             self.add_local(name)?;
-            self.compile_expression(expr, chunk)?;
-            self.locals.last_mut().unwrap().initialized = true;
         }
 
         Ok(())
     }
 
-    fn get_variable(
-        &mut self,
-        var: &ast::VariableRef,
-        chunk: &mut Chunk,
-        line_no: usize,
-    ) -> CompilerResult<()> {
+    fn define_variable(&mut self, name: &str, line_no: usize) -> CompilerResult<()> {
+        // Check if we're defining a global or local variable
+        if self.get_ctx().scope_depth == 0 {
+            // We store the name of the global as a string constant, so the VM can
+            // keep track of it.
+            let value = Value::String(self.vm_ref.intern_string(name));
+            let global_idx = self.current_chunk().add_constant(value);
+            self.current_chunk()
+                .write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
+        } else {
+            self.mark_last_local_initialized();
+        }
+
+        Ok(())
+    }
+
+    fn get_variable(&mut self, var: &ast::VariableRef, line_no: usize) -> CompilerResult<()> {
         match self.find_local(&var.name)? {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a GetGlobal instruction.
-                let global_idx = self.add_constant_string(&var.name, chunk);
-                chunk.write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
+                let value = Value::String(self.vm_ref.intern_string(&var.name));
+                let global_idx = self.current_chunk().add_constant(value);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
             }
             Some(idx) => {
                 // Local variable
-                chunk.write_op_with_u8(OpCode::GetLocal, idx, line_no);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::GetLocal, idx, line_no);
             }
         }
 
@@ -326,23 +421,25 @@ impl<'vm> Compiler<'vm> {
         &mut self,
         var: &ast::VariableRef,
         expr: &ast::Expr,
-        chunk: &mut Chunk,
         line_no: usize,
     ) -> CompilerResult<()> {
         // In any case, we need to emit instructions to put the result of the
         // expression on the stack.
-        self.compile_expression(expr, chunk)?;
+        self.compile_expression(expr)?;
 
         match self.find_local(&var.name)? {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a SetGlobal instruction.
-                let global_idx = self.add_constant_string(&var.name, chunk);
-                chunk.write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
+                let value = Value::String(self.vm_ref.intern_string(&var.name));
+                let global_idx = self.current_chunk().add_constant(value);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
             }
             Some(idx) => {
                 // Local variable
-                chunk.write_op_with_u8(OpCode::SetLocal, idx, line_no);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::SetLocal, idx, line_no);
             }
         }
 
@@ -351,24 +448,38 @@ impl<'vm> Compiler<'vm> {
 
     // ---- helpers ----
 
-    fn add_constant_string(&mut self, name: &str, chunk: &mut Chunk) -> ConstantIdx {
-        let name = Value::String(self.vm_ref.intern_string(name));
-        chunk.add_constant(name)
+    fn get_ctx(&self) -> &Context {
+        match self.context_stack.last() {
+            Some(state) => state,
+            None => panic!("Context stack empty!"),
+        }
+    }
+
+    fn get_ctx_mut(&mut self) -> &mut Context {
+        match self.context_stack.last_mut() {
+            Some(state) => state,
+            None => panic!("Context stack empty!"),
+        }
+    }
+
+    fn current_chunk(&mut self) -> &mut Chunk {
+        &mut self.get_ctx_mut().chunk
     }
 
     fn begin_scope(&mut self) {
-        self.current_scope += 1;
+        self.get_ctx_mut().scope_depth += 1;
     }
 
-    fn end_scope(&mut self, chunk: &mut Chunk) {
-        self.current_scope -= 1;
+    fn end_scope(&mut self) {
+        let state = self.get_ctx_mut();
+        state.scope_depth -= 1;
 
         // Go through the tail of the locals list, and pop off things until
         // we're done with that scope.
-        while let Some(local) = self.locals.last() {
-            if local.scope_depth > self.current_scope {
-                chunk.write_op(OpCode::Pop, 0); // TODO line no
-                self.locals.pop();
+        while let Some(local) = state.locals.last() {
+            if local.scope_depth > state.scope_depth {
+                state.chunk.write_op(OpCode::Pop, 0); // TODO line no
+                state.locals.pop();
             } else {
                 break;
             }
@@ -376,29 +487,35 @@ impl<'vm> Compiler<'vm> {
     }
 
     fn add_local(&mut self, name: &str) -> CompilerResult<()> {
-        if self.locals.len() == MAX_LOCALS {
+        let state = self.get_ctx_mut();
+        let scope_depth = state.scope_depth;
+        let locals = &mut state.locals;
+
+        if locals.len() == MAX_LOCALS {
             return Err(CompilerError::TooManyLocals);
         }
 
-        for local in self.locals.iter().rev() {
-            if local.scope_depth == self.current_scope && local.name == name {
+        for local in locals.iter().rev() {
+            if local.scope_depth == scope_depth && local.name == name {
                 return Err(CompilerError::LocalAlreadyExists(name.to_owned()));
             }
         }
 
         let new_local = Local {
             name: name.to_owned(),
-            scope_depth: self.current_scope,
+            scope_depth: scope_depth,
             initialized: false,
         };
-        self.locals.push(new_local);
+        locals.push(new_local);
 
         Ok(())
     }
 
     fn find_local(&self, name: &str) -> CompilerResult<Option<LocalIdx>> {
+        let locals = &self.get_ctx().locals;
+
         // Walking the array backwards is more efficient, I suppose
-        for (idx, local) in self.locals.iter().enumerate().rev() {
+        for (idx, local) in locals.iter().enumerate().rev() {
             // note: idx is measured from the _bottom_ of the stack
             if local.name == name {
                 if !local.initialized {
@@ -410,5 +527,9 @@ impl<'vm> Compiler<'vm> {
 
         // Not found, hopefully it's global.
         return Ok(None);
+    }
+
+    fn mark_last_local_initialized(&mut self) {
+        self.get_ctx_mut().locals.last_mut().unwrap().initialized = true;
     }
 }

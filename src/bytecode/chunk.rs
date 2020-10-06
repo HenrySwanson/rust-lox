@@ -105,10 +105,7 @@ impl Chunk {
         idx.try_into().expect("Too many constants")
     }
 
-    pub fn add_heap_constant(&mut self, obj: HeapObject, vm: &mut VM) -> ConstantIdx {
-        // Hand over ownership to the heap
-        let gc_handle = vm.push_to_heap(obj);
-
+    pub fn add_heap_constant(&mut self, gc_handle: GcStrong<HeapObject>) -> ConstantIdx {
         // Add it to the constant table like any other
         let value = Value::Obj(gc_handle.downgrade());
         let idx = self.add_constant(value);
@@ -223,6 +220,7 @@ impl Chunk {
                 print_two!("OP_LOOP", distance);
             }
             // Other
+            OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),
             OpCode::Pop => println!("OP_POP"),
             OpCode::Return => println!("OP_RETURN"),

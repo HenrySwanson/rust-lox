@@ -46,7 +46,7 @@ impl<T: Traceable> GcHeap<T> {
         }
     }
 
-    pub fn get(&self, handle: impl AsRef<GcPtr<T>>) -> Option<&T> {
+    pub fn try_get(&self, handle: impl AsRef<GcPtr<T>>) -> Option<&T> {
         let raw_ptr = handle.as_ref().raw_ptr;
         if self.objects.contains_key(&raw_ptr) {
             let t_ref: &T = unsafe { &*raw_ptr };
@@ -56,11 +56,11 @@ impl<T: Traceable> GcHeap<T> {
         }
     }
 
-    pub fn get_unchecked(&self, handle: impl AsRef<GcPtr<T>>) -> &T {
-        self.get(handle).expect("Object not found in heap")
+    pub fn get(&self, handle: impl AsRef<GcPtr<T>>) -> &T {
+        self.try_get(handle).expect("Object not found in heap")
     }
 
-    pub fn get_mut(&mut self, handle: impl AsRef<GcPtr<T>>) -> Option<&mut T> {
+    pub fn try_get_mut(&mut self, handle: impl AsRef<GcPtr<T>>) -> Option<&mut T> {
         let raw_ptr = handle.as_ref().raw_ptr;
         if self.objects.contains_key(&raw_ptr) {
             let t_ref: &mut T = unsafe { &mut *raw_ptr };
@@ -70,8 +70,23 @@ impl<T: Traceable> GcHeap<T> {
         }
     }
 
-    pub fn get_mut_unchecked(&mut self, handle: impl AsRef<GcPtr<T>>) -> &mut T {
-        self.get_mut(handle).expect("Object not found in heap")
+    pub fn get_mut(&mut self, handle: impl AsRef<GcPtr<T>>) -> &mut T {
+        self.try_get_mut(handle).expect("Object not found in heap")
+    }
+
+    pub fn try_upgrade(&self, handle: impl AsRef<GcPtr<T>>) -> Option<GcStrong<T>> {
+        let raw_ptr = handle.as_ref().raw_ptr;
+        match self.objects.get(&raw_ptr) {
+            Some(rc) => Some(GcStrong {
+                ptr: GcPtr { raw_ptr },
+                counter: rc.clone(),
+            }),
+            None => None,
+        }
+    }
+
+    pub fn upgrade(&self, handle: impl AsRef<GcPtr<T>>) -> GcStrong<T> {
+        self.try_upgrade(handle).expect("Object not found in heap")
     }
 
     // TODO we could get fancy and do a tricolor thing

@@ -14,6 +14,8 @@ pub enum RuntimeError {
     StackEmpty,
     InvalidStackIndex,
     UndefinedGlobal(String),
+    NotACallable,
+    WrongArity,
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;

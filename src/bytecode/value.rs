@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::chunk::Chunk;
 use super::gc::{GcPtr, Traceable};
 use super::string_interning::InternedString;
 
@@ -12,7 +13,15 @@ pub enum Value {
     Obj(GcPtr<HeapObject>),
 }
 
-pub enum HeapObject {}
+pub struct LoxFunctionData {
+    pub name: InternedString,
+    pub arity: usize,
+    pub chunk: Chunk,
+}
+
+pub enum HeapObject {
+    LoxFunction(LoxFunctionData),
+}
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
@@ -46,34 +55,22 @@ impl fmt::Debug for Value {
             Value::Boolean(b) => b.fmt(f),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => s.fmt(f),
-            // TODO: make this not unsafe
-            Value::Obj(handle) => write!(f, "(heap) {:?}", unsafe { &*handle.raw_ptr }),
+            // TODO: make this more informative
+            Value::Obj(handle) => write!(f, "(heap) {:?}", handle.raw_ptr),
         }
     }
 }
 
-impl PartialEq<HeapObject> for HeapObject {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl Eq for HeapObject {}
-
-impl fmt::Debug for HeapObject {
-    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            _ => unreachable!(),
-        }
+impl LoxFunctionData {
+    pub fn new(name: InternedString, arity: usize, chunk: Chunk) -> Self {
+        LoxFunctionData { name, arity, chunk }
     }
 }
 
 impl Traceable for HeapObject {
     fn trace(&self) -> Vec<GcPtr<HeapObject>> {
         match self {
-            _ => unreachable!(),
+            _ => todo!(),
         }
     }
 }
