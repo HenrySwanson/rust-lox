@@ -132,7 +132,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_block(&mut self, stmts: &Vec<ast::Stmt>) -> RuntimeResult<()> {
+    fn eval_block(&mut self, stmts: &[ast::Stmt]) -> RuntimeResult<()> {
         // Grab old scope and make new one
         let prev = self.env.clone();
         self.env = Environment::with_enclosing(&prev);
@@ -185,7 +185,7 @@ impl Interpreter {
                 let this = self.env.get_at(this_depth, THIS_STR).expect(err_msg);
                 match superclass.find_method(method_name) {
                     Some(method) => Ok(Object::LoxFunction(method.bind(this))),
-                    None => Err(Error::NoSuchProperty(this.clone(), method_name.to_owned())),
+                    None => Err(Error::NoSuchProperty(this, method_name.to_owned())),
                 }
             }
         }
@@ -238,7 +238,7 @@ impl Interpreter {
     fn eval_function_call(
         &mut self,
         callee: &ast::Expr,
-        arg_exprs: &Vec<ast::Expr>,
+        arg_exprs: &[ast::Expr],
     ) -> RuntimeResult<Object> {
         let callee = self.eval_expression(callee)?;
 
@@ -253,7 +253,7 @@ impl Interpreter {
     fn eval_property_access(&mut self, expr: &ast::Expr, property: &str) -> RuntimeResult<Object> {
         match self.eval_expression(expr)? {
             Object::LoxInstance(instance) => Ok(instance.get(property)?),
-            obj => Err(Error::NotAnInstance(obj.clone())),
+            obj => Err(Error::NotAnInstance(obj)),
         }
     }
 
@@ -265,7 +265,7 @@ impl Interpreter {
     ) -> RuntimeResult<Object> {
         let instance = match self.eval_expression(expr)? {
             Object::LoxInstance(instance) => instance,
-            obj => return Err(Error::NotAnInstance(obj.clone())),
+            obj => return Err(Error::NotAnInstance(obj)),
         };
         let value = self.eval_expression(value)?;
         instance.set(property, value.clone());

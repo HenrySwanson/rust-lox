@@ -101,6 +101,7 @@ impl<T: Traceable> GcHeap<T> {
         }
 
         // Continuously explore the frontier, marking it as we go
+        #[allow(clippy::mutable_key_type)]
         let mut marked = HashSet::new();
         while let Some(ptr) = frontier.pop() {
             // Mark the node, but if it's already marked, don't recurse on it

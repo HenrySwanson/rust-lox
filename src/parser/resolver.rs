@@ -240,23 +240,16 @@ impl Resolver {
 
     // Returns true if we're in the middle of initializing variable `name`.
     fn is_during_initializer(&self, name: &str) -> bool {
-        if let Some(scope) = self.scopes.last() {
-            match scope.get(name) {
-                Some(VariableState::Uninitialized) => {
-                    return true;
-                }
-                _ => (),
-            }
-        }
-        return false;
+        let state = self.scopes.last().map(|s| s.get(name)).flatten();
+        state.copied() == Some(VariableState::Uninitialized)
     }
 
     // Returns true if we've already defined this variable in the current scope
     fn is_already_defined(&self, name: &str) -> bool {
-        if let Some(scope) = self.scopes.last() {
-            return scope.contains_key(name);
+        match self.scopes.last() {
+            Some(scope) => scope.contains_key(name),
+            None => false,
         }
-        return false;
     }
 
     fn resolve_local_variable(&self, var: &mut ast::VariableRef) {
@@ -286,11 +279,8 @@ impl Resolver {
     }
 
     fn set_variable_state(&mut self, name: &str, value: VariableState) {
-        match self.scopes.last_mut() {
-            Some(scope) => {
-                scope.insert(name.to_owned(), value);
-            }
-            None => (),
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_owned(), value);
         }
     }
 }

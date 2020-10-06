@@ -58,15 +58,15 @@ where
 
     /// Advances the stream, erroring if we're at EOF
     fn bump(&mut self) {
-        match self.take_token().token {
-            Token::EndOfFile => panic!("Bumped at EOF"),
-            _ => (),
+        let token = self.take_token();
+        if token.token == Token::EndOfFile {
+            panic!("Bumped at EOF");
         }
     }
 
     /// Checks whether or not the current token matches the given token
     fn check(&mut self, t: Token) -> bool {
-        return self.peek_token().token == t;
+        self.peek_token().token == t
     }
 
     /// Checks whether or not the current token matches the given token,
@@ -74,9 +74,10 @@ where
     fn try_eat(&mut self, t: Token) -> bool {
         if self.check(t) {
             self.bump();
-            return true;
+            true
+        } else {
+            false
         }
-        return false;
     }
 
     /// Same as try_eat, but returns an error if the token doesn't match.
@@ -106,7 +107,7 @@ where
             stmts.push(stmt);
         }
 
-        return stmts;
+        stmts
     }
 
     fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
@@ -498,7 +499,7 @@ where
     fn parse_identifier(&mut self) -> ParseResult<String> {
         let token = self.take_token();
         match token.token {
-            Token::Identifier(name) => Ok(name.clone()),
+            Token::Identifier(name) => Ok(name),
             _ => Err(Error::ExpectedIdentifier(token.span.lo)),
         }
     }

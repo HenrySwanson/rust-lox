@@ -3,7 +3,6 @@ use std::convert::{TryFrom, TryInto};
 use super::gc::GcStrong;
 use super::opcode::OpCode;
 use super::value::{HeapObject, Value};
-use super::vm::VM;
 
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
@@ -113,7 +112,7 @@ impl Chunk {
         // Stash the strong handle in the chunk, so it doesn't get garbage-collected
         self.constant_roots.push(gc_handle);
 
-        return idx;
+        idx
     }
 
     pub fn lookup_constant(&self, idx: ConstantIdx) -> Value {
@@ -229,6 +228,7 @@ impl Chunk {
             OpCode::Pop => println!("OP_POP"),
             OpCode::Return => println!("OP_RETURN"),
         };
-        return offset + instruction.arg_size_in_bytes() + 1;
+
+        offset + instruction.arg_size_in_bytes() + 1
     }
 }

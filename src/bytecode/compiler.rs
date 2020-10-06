@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
-use super::chunk::{Chunk, ConstantIdx};
+use super::chunk::Chunk;
 use super::errs::{CompilerError, CompilerResult};
 use super::gc::GcStrong;
 use super::opcode::OpCode;
@@ -59,7 +59,7 @@ impl<'vm> Compiler<'vm> {
         }
     }
 
-    pub fn compile(&mut self, stmts: &Vec<ast::Stmt>) -> CompilerResult<GcStrong<HeapObject>> {
+    pub fn compile(&mut self, stmts: &[ast::Stmt]) -> CompilerResult<GcStrong<HeapObject>> {
         // Put in a fresh context
         self.context_stack.push(Context::new(""));
 
@@ -504,7 +504,7 @@ impl<'vm> Compiler<'vm> {
 
         let new_local = Local {
             name: name.to_owned(),
-            scope_depth: scope_depth,
+            scope_depth,
             initialized: false,
         };
         locals.push(new_local);
@@ -527,7 +527,7 @@ impl<'vm> Compiler<'vm> {
         }
 
         // Not found, hopefully it's global.
-        return Ok(None);
+        Ok(None)
     }
 
     fn mark_last_local_initialized(&mut self) {

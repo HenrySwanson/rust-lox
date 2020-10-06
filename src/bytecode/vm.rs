@@ -74,7 +74,7 @@ impl VM {
                 println!("frame ptr = {}", self.frame().base_ptr);
                 println!("ip = {}", self.frame().ip);
                 self.chunk().disassemble_at(ip);
-                println!("");
+                println!();
             }
 
             let op = match self.try_read_op() {
@@ -207,7 +207,7 @@ impl VM {
                     let result = self.pop_frame()?;
 
                     // Now check if there are any frames left
-                    if self.call_stack.len() == 0 {
+                    if self.call_stack.is_empty() {
                         return Ok(()); // exit loop
                     } else {
                         self.push(result);
@@ -273,7 +273,7 @@ impl VM {
         let new_frame = CallFrame {
             ip: 0,
             base_ptr: self.stack.len() - (arg_count + 1),
-            callable: callable,
+            callable,
         };
         self.call_stack.push(new_frame);
     }

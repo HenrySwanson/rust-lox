@@ -11,11 +11,11 @@ pub struct Lexer<'a> {
 pub type LexResult<T> = Result<T, String>;
 
 fn is_identifier_char(ch: char) -> bool {
-    return ch.is_ascii_alphanumeric() || ch == '_';
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 fn is_digit_char(ch: char) -> bool {
-    return ch.is_ascii_digit();
+    ch.is_ascii_digit()
 }
 
 impl<'src> Lexer<'src> {
@@ -137,7 +137,7 @@ impl<'src> Lexer<'src> {
         self.cursor.take();
 
         let value = self.source[start_idx..end_idx].to_owned();
-        return Ok(Token::String(value));
+        Ok(Token::String(value))
     }
 
     /// Scans to the end of the number, and returns a token containing its value.

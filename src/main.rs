@@ -1,4 +1,4 @@
-use crate::bytecode::{Chunk, Compiler, VM};
+use crate::bytecode::{Compiler, VM};
 use crate::common::ast;
 use crate::lexer::Lexer;
 use crate::parser::{Parser, Resolver};

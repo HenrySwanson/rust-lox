@@ -44,7 +44,7 @@ impl<'src> Cursor<'src> {
             self.position.column_no += 1;
         }
 
-        return Some((byte_idx, ch));
+        Some((byte_idx, ch))
     }
 
     /// Consumes the next character only if it matches the given character,
@@ -55,7 +55,7 @@ impl<'src> Cursor<'src> {
             Some((_, ch)) if ch != expected => false,
             _ => {
                 self.take();
-                return true;
+                true
             }
         }
     }

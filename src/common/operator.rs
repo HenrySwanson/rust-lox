@@ -51,7 +51,8 @@ impl PrefixOperator {
             Token::Bang => PrefixOperator::LogicalNot,
             _ => return None,
         };
-        return Some(op);
+
+        Some(op)
     }
 
     pub fn precedence(&self) -> Precedence {
@@ -83,7 +84,8 @@ impl InfixOperator {
             Token::LeftAngleEq => InfixOperator::LessEq,
             _ => return None,
         };
-        return Some(op);
+
+        Some(op)
     }
 
     pub fn precedence(&self) -> Precedence {
@@ -121,7 +123,8 @@ impl LogicalOperator {
             Token::Or => LogicalOperator::Or,
             _ => return None,
         };
-        return Some(op);
+
+        Some(op)
     }
 
     pub fn precedence(&self) -> Precedence {

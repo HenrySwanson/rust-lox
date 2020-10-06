@@ -114,7 +114,8 @@ impl LoxInstancePtr {
             Some(method_ptr) => {
                 let self_as_instance = Object::LoxInstance(self.clone());
                 let bound_method = method_ptr.bind(self_as_instance);
-                return Some(Object::LoxFunction(bound_method));
+
+                Some(Object::LoxFunction(bound_method))
             }
             None => None,
         }
