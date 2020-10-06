@@ -120,6 +120,10 @@ impl Chunk {
         self.constants[idx as usize].clone()
     }
 
+    pub fn get_line_no(&self, idx: usize) -> usize {
+        self.line_nos[idx]
+    }
+
     // TODO: should this take a formatter???
     pub fn disassemble(&self, name: &str) {
         println!("== {} ==", name);

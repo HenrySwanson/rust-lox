@@ -48,8 +48,20 @@ impl VM {
         // Make a frame for the invocation of main()
         self.push_new_frame(0, main_fn);
 
-        // TODO print stack trace on failure
-        self.run()
+        // Print stack trace on failure
+        let result = self.run();
+        if result.is_err() {
+            for frame in self.call_stack.iter().rev() {
+                let (fn_name, chunk) = match self.heap.get(&frame.callable) {
+                    HeapObject::LoxFunction(fn_data) => (&fn_data.name, &fn_data.chunk),
+                    _ => panic!("Call stack obj not callable"),
+                };
+                let line_no = chunk.get_line_no(frame.ip - 1);
+                println!("[line {}] in {}", line_no, fn_name);
+            }
+        }
+
+        result
     }
 
     fn run(&mut self) -> RuntimeResult<()> {
