@@ -1,4 +1,5 @@
 mod chunk;
+mod native;
 mod compiler;
 mod errs;
 mod gc;

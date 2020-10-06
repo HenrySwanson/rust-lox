@@ -16,6 +16,7 @@ pub enum RuntimeError {
     UndefinedGlobal(String),
     NotACallable,
     WrongArity,
+    NativeError(String),
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;

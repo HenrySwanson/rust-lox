@@ -19,8 +19,17 @@ pub struct LoxFunctionData {
     pub chunk: Chunk,
 }
 
+pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
+
+pub struct NativeFnData {
+    pub name: InternedString,
+    pub arity: usize,
+    pub function: NativeFnType,
+}
+
 pub enum HeapObject {
     LoxFunction(LoxFunctionData),
+    NativeFunction(NativeFnData),
 }
 
 impl Value {

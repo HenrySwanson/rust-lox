@@ -5,7 +5,8 @@ use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcStrong};
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{HeapObject, Value};
+use super::value::{HeapObject, Value, NativeFnData};
+use super::native;
 
 struct CallFrame {
     ip: usize,
@@ -25,13 +26,25 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        VM {
+        let mut vm = VM {
             call_stack: vec![],
             stack: vec![],
             heap: GcHeap::new(),
             string_table: StringInterner::new(),
             globals: HashMap::new(),
+        };
+
+        // Define natives
+        for (name, arity, function) in native::get_natives().iter().copied() {
+            let name = vm.intern_string(name);
+            let fn_data = NativeFnData {
+                name: name.clone(), arity, function
+            };
+            let obj_ptr = vm.insert_into_heap(HeapObject::NativeFunction(fn_data));
+            vm.globals.insert(name, Value::Obj(obj_ptr.downgrade()));
         }
+
+        vm
     }
 
     pub fn interpret(&mut self, main_fn: GcStrong<HeapObject>) -> RuntimeResult<()> {
@@ -190,17 +203,30 @@ impl VM {
                         Value::Obj(gc_ptr) => gc_ptr.clone(),
                         _ => return Err(RuntimeError::NotACallable), // only callable objects are on the heap
                     };
-                    let fn_data = match self.heap.get(&callable_ptr) {
-                        HeapObject::LoxFunction(fn_data) => fn_data,
-                    };
 
-                    // Check that the arity matches
-                    if fn_data.arity != arg_count {
-                        return Err(RuntimeError::WrongArity);
+                    // How we call it depends a lot on the object -- do a big match
+                    match self.heap.get(&callable_ptr) {
+                        HeapObject::LoxFunction(fn_data) => {
+                            // Check that the arity matches, and push the new frame
+                            if fn_data.arity != arg_count {
+                                return Err(RuntimeError::WrongArity);
+                            }
+                            self.push_new_frame(arg_count, self.heap.upgrade(callable_ptr));
+                        }
+                        HeapObject::NativeFunction(fn_data) => {
+                            // Don't even do anything to the interpreter stack, just plug in the args
+                            let start_idx = self.stack.len() - arg_count;
+                            let arg_slice = &self.stack[start_idx..];
+                            let value = match (fn_data.function)(arg_slice) {
+                                Ok(value) => value,
+                                Err(error_str) => return Err(RuntimeError::NativeError(error_str)),
+                            };
+
+                            // Strip off the args and the native fn, putting the return value on instead
+                            self.stack.truncate(self.stack.len() - arg_count - 1);
+                            self.push(value);
+                        }
                     }
-
-                    // Alright, we're ready to call the function.
-                    self.push_new_frame(arg_count, self.heap.upgrade(callable_ptr));
                 }
                 OpCode::Return => {
                     // Rescue the return value off the stack
