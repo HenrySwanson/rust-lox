@@ -1,4 +1,5 @@
 use std::fmt;
+use std::rc::Rc;
 
 use super::chunk::Chunk;
 use super::gc::{GcPtr, Traceable};
@@ -16,7 +17,7 @@ pub enum Value {
 pub struct LoxFunctionData {
     pub name: InternedString,
     pub arity: usize,
-    pub chunk: Chunk,
+    pub chunk: Rc<Chunk>,
 }
 
 pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
@@ -71,15 +72,24 @@ impl fmt::Debug for Value {
 }
 
 impl LoxFunctionData {
-    pub fn new(name: InternedString, arity: usize, chunk: Chunk) -> Self {
+    pub fn new(name: InternedString, arity: usize, chunk: Rc<Chunk>) -> Self {
         LoxFunctionData { name, arity, chunk }
     }
 }
 
 impl Traceable for HeapObject {
+    // TODO return iterator instead? no heap allocation
     fn trace(&self) -> Vec<GcPtr<HeapObject>> {
         match self {
-            _ => todo!(),
+            HeapObject::LoxFunction(_) => {
+                // nothing to do here; while we do have a reference to a Chunk,
+                // that chunk only has GcStrong references to heap objects
+                vec![]
+            }
+            HeapObject::NativeFunction(_) => {
+                // also nothing
+                vec![]
+            }
         }
     }
 }

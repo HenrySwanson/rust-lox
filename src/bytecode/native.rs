@@ -1,11 +1,11 @@
-use super::value::{Value, NativeFnType};
+use super::value::{NativeFnType, Value};
 
 pub fn get_natives() -> &'static [(&'static str, usize, NativeFnType)] {
-	&[("clock", 0, clock)]
+    &[("clock", 0, clock)]
 }
 
 fn clock(_args: &[Value]) -> Result<Value, String> {
-	use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("SystemTime before UNIX EPOCH!");

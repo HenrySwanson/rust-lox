@@ -1,18 +1,19 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use super::chunk::{Chunk, ConstantIdx};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcStrong};
+use super::native;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{HeapObject, Value, NativeFnData};
-use super::native;
+use super::value::{HeapObject, LoxFunctionData, NativeFnData, Value};
 
 struct CallFrame {
     ip: usize,
     base_ptr: usize,
-    // could be a LoxFunctionData if we had a heterogenous heap...
-    callable: GcStrong<HeapObject>,
+    name: InternedString,
+    chunk: Rc<Chunk>,
 }
 
 pub struct VM {
@@ -22,6 +23,26 @@ pub struct VM {
     heap: GcHeap<HeapObject>,
     string_table: StringInterner,
     globals: HashMap<InternedString, Value>,
+}
+
+impl CallFrame {
+    fn read_u8(&mut self) -> u8 {
+        let byte = self.chunk.read_u8(self.ip);
+        self.ip += 1;
+        byte
+    }
+
+    fn read_u16(&mut self) -> u16 {
+        let short = self.chunk.read_u16(self.ip);
+        self.ip += 2;
+        short
+    }
+
+    fn try_read_op(&mut self) -> Result<OpCode, u8> {
+        let result = self.chunk.try_read_op(self.ip);
+        self.ip += 1;
+        result
+    }
 }
 
 impl VM {
@@ -38,7 +59,9 @@ impl VM {
         for (name, arity, function) in native::get_natives().iter().copied() {
             let name = vm.intern_string(name);
             let fn_data = NativeFnData {
-                name: name.clone(), arity, function
+                name: name.clone(),
+                arity,
+                function,
             };
             let obj_ptr = vm.insert_into_heap(HeapObject::NativeFunction(fn_data));
             vm.globals.insert(name, Value::Obj(obj_ptr.downgrade()));
@@ -47,27 +70,34 @@ impl VM {
         vm
     }
 
-    pub fn interpret(&mut self, main_fn: GcStrong<HeapObject>) -> RuntimeResult<()> {
+    pub fn interpret(&mut self, main_chunk: Chunk) -> RuntimeResult<()> {
         // Reset computational state
         self.call_stack.clear();
         self.stack.clear();
 
         // Make main() a real value and push it onto the stack
-        self.push(Value::Obj(main_fn.downgrade()));
+        let main_name = self.intern_string("<main>");
+        let main_chunk = Rc::new(main_chunk);
+        // TODO this is so gross. make it better please
+        let main_fn = Value::Obj(
+            self.insert_into_heap(HeapObject::LoxFunction(LoxFunctionData::new(
+                main_name.clone(),
+                0,
+                main_chunk.clone(),
+            )))
+            .downgrade(),
+        );
+        self.push(main_fn);
 
         // Make a frame for the invocation of main()
-        self.push_new_frame(0, main_fn);
+        self.push_new_frame(0, main_name, main_chunk);
 
         // Print stack trace on failure
         let result = self.run();
         if result.is_err() {
             for frame in self.call_stack.iter().rev() {
-                let (fn_name, chunk) = match self.heap.get(&frame.callable) {
-                    HeapObject::LoxFunction(fn_data) => (&fn_data.name, &fn_data.chunk),
-                    _ => panic!("Call stack obj not callable"),
-                };
-                let line_no = chunk.get_line_no(frame.ip - 1);
-                println!("[line {}] in {}", line_no, fn_name);
+                let line_no = frame.chunk.get_line_no(frame.ip - 1);
+                println!("[line {}] in {}", line_no, frame.name);
             }
         }
 
@@ -90,7 +120,7 @@ impl VM {
                 println!();
             }
 
-            let op = match self.try_read_op() {
+            let op = match self.frame_mut().try_read_op() {
                 Ok(op) => op,
                 Err(byte) => return Err(RuntimeError::InvalidOpcode(byte)),
             };
@@ -98,8 +128,8 @@ impl VM {
             match op {
                 // Constants
                 OpCode::Constant => {
-                    let idx = self.read_u8();
-                    let constant = self.chunk().lookup_constant(idx);
+                    let idx = self.frame_mut().read_u8();
+                    let constant = self.frame().chunk.lookup_constant(idx);
                     self.push(constant);
                 }
                 OpCode::True => self.push(Value::Boolean(true)),
@@ -141,13 +171,13 @@ impl VM {
                 OpCode::LessThan => self.comparison_binop(|a, b| a < b)?,
                 // Variables
                 OpCode::DefineGlobal => {
-                    let idx = self.read_u8();
+                    let idx = self.frame_mut().read_u8();
                     let name = self.lookup_string(idx);
                     let value = self.pop()?;
                     self.globals.insert(name, value);
                 }
                 OpCode::GetGlobal => {
-                    let idx = self.read_u8();
+                    let idx = self.frame_mut().read_u8();
                     let name = self.lookup_string(idx);
                     let value = match self.globals.get(&name) {
                         Some(value) => value.clone(),
@@ -159,7 +189,7 @@ impl VM {
                     self.push(value);
                 }
                 OpCode::SetGlobal => {
-                    let idx = self.read_u8();
+                    let idx = self.frame_mut().read_u8();
                     let name = self.lookup_string(idx);
                     if !self.globals.contains_key(&name) {
                         let name: String = (*name).to_owned();
@@ -170,33 +200,33 @@ impl VM {
                     self.globals.insert(name, value);
                 }
                 OpCode::GetLocal => {
-                    let idx = self.read_u8() as usize;
+                    let idx = self.frame_mut().read_u8() as usize;
                     let value = self.stack[base_ptr + idx].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
                     let value = self.peek(0)?;
-                    let idx = self.read_u8() as usize;
+                    let idx = self.frame_mut().read_u8() as usize;
                     self.stack[base_ptr + idx] = value;
                 }
                 // Jumps
                 OpCode::Jump => {
-                    let jump_by = usize::from(self.read_u16());
+                    let jump_by = usize::from(self.frame_mut().read_u16());
                     self.frame_mut().ip += jump_by;
                 }
                 OpCode::JumpIfFalse => {
-                    let jump_by = usize::from(self.read_u16());
+                    let jump_by = usize::from(self.frame_mut().read_u16());
                     if !self.peek(0)?.is_truthy() {
                         self.frame_mut().ip += jump_by;
                     }
                 }
                 OpCode::Loop => {
-                    let jump_by = usize::from(self.read_u16());
+                    let jump_by = usize::from(self.frame_mut().read_u16());
                     self.frame_mut().ip -= jump_by;
                 }
                 // Other
                 OpCode::Call => {
-                    let arg_count: usize = self.read_u8().into();
+                    let arg_count: usize = self.frame_mut().read_u8().into();
 
                     // Fetch the object in the appropriate stack slot
                     let callable_ptr = match &self.peek(arg_count)? {
@@ -211,9 +241,17 @@ impl VM {
                             if fn_data.arity != arg_count {
                                 return Err(RuntimeError::WrongArity);
                             }
-                            self.push_new_frame(arg_count, self.heap.upgrade(callable_ptr));
+                            self.push_new_frame(
+                                arg_count,
+                                fn_data.name.clone(),
+                                fn_data.chunk.clone(),
+                            );
                         }
                         HeapObject::NativeFunction(fn_data) => {
+                            if fn_data.arity != arg_count {
+                                return Err(RuntimeError::WrongArity);
+                            }
+
                             // Don't even do anything to the interpreter stack, just plug in the args
                             let start_idx = self.stack.len() - arg_count;
                             let arg_slice = &self.stack[start_idx..];
@@ -266,40 +304,12 @@ impl VM {
         }
     }
 
-    fn chunk(&self) -> &Chunk {
-        let gc_ptr = &self.frame().callable;
-        match self.heap.get(gc_ptr) {
-            HeapObject::LoxFunction(fn_data) => &fn_data.chunk,
-            _ => panic!("`callable` is not callable!"),
-        }
-    }
-
-    fn read_u8(&mut self) -> u8 {
-        let ip = self.frame_mut().ip;
-        let byte = self.chunk().read_u8(ip);
-        self.frame_mut().ip += 1;
-        byte
-    }
-
-    fn read_u16(&mut self) -> u16 {
-        let ip = self.frame_mut().ip;
-        let short = self.chunk().read_u16(ip);
-        self.frame_mut().ip += 2;
-        short
-    }
-
-    fn try_read_op(&mut self) -> Result<OpCode, u8> {
-        let ip = self.frame_mut().ip;
-        let result = self.chunk().try_read_op(ip);
-        self.frame_mut().ip += 1;
-        result
-    }
-
-    fn push_new_frame(&mut self, arg_count: usize, callable: GcStrong<HeapObject>) {
+    fn push_new_frame(&mut self, arg_count: usize, name: InternedString, chunk: Rc<Chunk>) {
         let new_frame = CallFrame {
             ip: 0,
             base_ptr: self.stack.len() - (arg_count + 1),
-            callable,
+            name,
+            chunk,
         };
         self.call_stack.push(new_frame);
     }
@@ -397,7 +407,7 @@ impl VM {
     }
 
     fn lookup_string(&self, idx: ConstantIdx) -> InternedString {
-        let chunk = &self.chunk();
+        let chunk = &self.frame().chunk;
         match chunk.lookup_constant(idx) {
             Value::String(s) => s,
             _ => panic!("Global table contains non-string"),

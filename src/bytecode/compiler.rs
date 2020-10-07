@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::rc::Rc;
 
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
@@ -57,7 +58,7 @@ impl<'vm> Compiler<'vm> {
         }
     }
 
-    pub fn compile(&mut self, stmts: &[ast::Stmt]) -> CompilerResult<GcStrong<HeapObject>> {
+    pub fn compile(&mut self, stmts: &[ast::Stmt]) -> CompilerResult<Chunk> {
         // Put in a fresh context
         self.context_stack.push(Context::new(""));
 
@@ -70,14 +71,9 @@ impl<'vm> Compiler<'vm> {
 
         self.print_chunk("<main>"); // for debugging
 
-        // Define the implicit main function
+        // Return the chunk defining main()
         let root_state = self.context_stack.pop().expect("Context stack empty!");
-        let fn_data =
-            LoxFunctionData::new(self.vm_ref.intern_string("<main>"), 0, root_state.chunk);
-        let main_fn_handle = self
-            .vm_ref
-            .insert_into_heap(HeapObject::LoxFunction(fn_data));
-        Ok(main_fn_handle)
+        Ok(root_state.chunk)
     }
 
     pub fn compile_statement(&mut self, stmt: &ast::Stmt) -> CompilerResult<()> {
@@ -216,7 +212,7 @@ impl<'vm> Compiler<'vm> {
         // Build the function data
         let ctx = self.context_stack.pop().expect("Context stack empty!");
         let interned_name = self.vm_ref.intern_string(&fn_decl.name);
-        let fn_data = LoxFunctionData::new(interned_name, fn_decl.params.len(), ctx.chunk);
+        let fn_data = LoxFunctionData::new(interned_name, fn_decl.params.len(), Rc::new(ctx.chunk));
 
         // Create the function object and stash it in the chunk
         let obj = self
@@ -536,6 +532,6 @@ impl<'vm> Compiler<'vm> {
         // TODO no reason this needs to be mut, except that current_chunk has
         // no mut version
         #[cfg(feature = "print-chunks")]
-        self.current_chunk().disassemble("<main>");
+        self.current_chunk().disassemble(name);
     }
 }
