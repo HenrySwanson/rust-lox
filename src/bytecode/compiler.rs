@@ -6,9 +6,8 @@ use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use super::chunk::Chunk;
 use super::errs::{CompilerError, CompilerResult};
-use super::gc::GcStrong;
 use super::opcode::OpCode;
-use super::value::{HeapObject, LoxFunctionData, Value};
+use super::value::{HeapObject, Value};
 use super::vm::VM;
 
 // since the GET_LOCAL instruction takes a byte
@@ -212,13 +211,15 @@ impl<'vm> Compiler<'vm> {
         // Build the function data
         let ctx = self.context_stack.pop().expect("Context stack empty!");
         let interned_name = self.vm_ref.intern_string(&fn_decl.name);
-        let fn_data = LoxFunctionData::new(interned_name, fn_decl.params.len(), Rc::new(ctx.chunk));
 
         // Create the function object and stash it in the chunk
-        let obj = self
-            .vm_ref
-            .insert_into_heap(HeapObject::LoxFunction(fn_data));
-        let idx = self.current_chunk().add_heap_constant(obj);
+        let fn_obj = HeapObject::LoxFunction {
+            name: interned_name,
+            arity: fn_decl.params.len(),
+            chunk: Rc::new(ctx.chunk),
+        };
+        let obj_ptr = self.vm_ref.insert_into_heap(fn_obj);
+        let idx = self.current_chunk().add_heap_constant(obj_ptr);
         self.current_chunk()
             .write_op_with_u8(OpCode::Constant, idx, line_no);
 
@@ -528,10 +529,9 @@ impl<'vm> Compiler<'vm> {
         self.get_ctx_mut().locals.last_mut().unwrap().initialized = true;
     }
 
-    fn print_chunk(&mut self, name: &str) {
-        // TODO no reason this needs to be mut, except that current_chunk has
-        // no mut version
+    #[allow(unused_variables)]
+    fn print_chunk(&self, name: &str) {
         #[cfg(feature = "print-chunks")]
-        self.current_chunk().disassemble(name);
+        self.get_ctx().chunk.disassemble(name);
     }
 }

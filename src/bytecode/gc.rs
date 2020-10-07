@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::rc::Rc;
 
 pub struct GcHeap<T> {
@@ -11,8 +12,7 @@ pub struct GcHeap<T> {
 // so it is up to the user to only hold onto GcPtrs that correspond to reachable
 // objects.
 pub struct GcPtr<T> {
-    // TODO stop making it pub
-    pub raw_ptr: *mut T,
+    raw_ptr: *mut T,
 }
 
 // Like GcPtr, but also roots the object (so that it will not be garbage collected).
@@ -128,6 +128,12 @@ impl<T> Drop for GcHeap<T> {
 }
 
 // ---- GcPtr impls ----
+
+impl<T> fmt::Debug for GcPtr<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.raw_ptr)
+    }
+}
 
 impl<T> Clone for GcPtr<T> {
     fn clone(&self) -> Self {

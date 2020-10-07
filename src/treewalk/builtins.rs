@@ -31,7 +31,7 @@ impl BuiltInFnPtr {
     pub fn execute_call(
         &self,
         args: Vec<Object>,
-        interpreter: &mut Interpreter,
+        _interpreter: &mut Interpreter,
     ) -> RuntimeResult<Object> {
         if self.0.arity == args.len() {
             (self.0.func)(args)

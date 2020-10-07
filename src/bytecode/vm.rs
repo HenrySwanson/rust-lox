@@ -7,7 +7,7 @@ use super::gc::{GcHeap, GcStrong};
 use super::native;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{HeapObject, LoxFunctionData, NativeFnData, Value};
+use super::value::{HeapObject, Value};
 
 struct CallFrame {
     ip: usize,
@@ -58,12 +58,12 @@ impl VM {
         // Define natives
         for (name, arity, function) in native::get_natives().iter().copied() {
             let name = vm.intern_string(name);
-            let fn_data = NativeFnData {
+            let native_fn = HeapObject::NativeFunction {
                 name: name.clone(),
                 arity,
                 function,
             };
-            let obj_ptr = vm.insert_into_heap(HeapObject::NativeFunction(fn_data));
+            let obj_ptr = vm.insert_into_heap(native_fn);
             vm.globals.insert(name, Value::Obj(obj_ptr.downgrade()));
         }
 
@@ -78,16 +78,14 @@ impl VM {
         // Make main() a real value and push it onto the stack
         let main_name = self.intern_string("<main>");
         let main_chunk = Rc::new(main_chunk);
-        // TODO this is so gross. make it better please
-        let main_fn = Value::Obj(
-            self.insert_into_heap(HeapObject::LoxFunction(LoxFunctionData::new(
-                main_name.clone(),
-                0,
-                main_chunk.clone(),
-            )))
-            .downgrade(),
-        );
-        self.push(main_fn);
+        let main_fn = HeapObject::LoxFunction {
+            name: main_name.clone(),
+            arity: 0,
+            chunk: main_chunk.clone(),
+        };
+        let main_value = Value::Obj(self.insert_into_heap(main_fn).downgrade());
+
+        self.push(main_value);
 
         // Make a frame for the invocation of main()
         self.push_new_frame(0, main_name, main_chunk);
@@ -106,17 +104,18 @@ impl VM {
 
     fn run(&mut self) -> RuntimeResult<()> {
         loop {
-            let ip = self.frame().ip;
-            let base_ptr = self.frame().base_ptr;
-
             #[cfg(feature = "trace-execution")]
             {
+                let frame = self.frame_mut();
+                let ip = frame.ip;
+                let base_ptr = frame.base_ptr;
+
                 println!("STACK     {:?}", self.stack);
                 println!(
                     "IP = {}, BP = {} ({:?})",
                     ip, base_ptr, self.stack[base_ptr]
                 );
-                self.chunk().disassemble_at(ip);
+                self.frame_mut().chunk.disassemble_at(ip);
                 println!();
             }
 
@@ -200,11 +199,13 @@ impl VM {
                     self.globals.insert(name, value);
                 }
                 OpCode::GetLocal => {
+                    let base_ptr = self.frame().base_ptr;
                     let idx = self.frame_mut().read_u8() as usize;
                     let value = self.stack[base_ptr + idx].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal => {
+                    let base_ptr = self.frame().base_ptr;
                     let value = self.peek(0)?;
                     let idx = self.frame_mut().read_u8() as usize;
                     self.stack[base_ptr + idx] = value;
@@ -236,26 +237,27 @@ impl VM {
 
                     // How we call it depends a lot on the object -- do a big match
                     match self.heap.get(&callable_ptr) {
-                        HeapObject::LoxFunction(fn_data) => {
+                        HeapObject::LoxFunction { name, arity, chunk } => {
                             // Check that the arity matches, and push the new frame
-                            if fn_data.arity != arg_count {
+                            if *arity != arg_count {
                                 return Err(RuntimeError::WrongArity);
                             }
-                            self.push_new_frame(
-                                arg_count,
-                                fn_data.name.clone(),
-                                fn_data.chunk.clone(),
-                            );
+
+                            let name = name.clone();
+                            let chunk = chunk.clone();
+                            self.push_new_frame(arg_count, name, chunk);
                         }
-                        HeapObject::NativeFunction(fn_data) => {
-                            if fn_data.arity != arg_count {
+                        HeapObject::NativeFunction {
+                            arity, function, ..
+                        } => {
+                            if *arity != arg_count {
                                 return Err(RuntimeError::WrongArity);
                             }
 
                             // Don't even do anything to the interpreter stack, just plug in the args
                             let start_idx = self.stack.len() - arg_count;
                             let arg_slice = &self.stack[start_idx..];
-                            let value = match (fn_data.function)(arg_slice) {
+                            let value = match function(arg_slice) {
                                 Ok(value) => value,
                                 Err(error_str) => return Err(RuntimeError::NativeError(error_str)),
                             };

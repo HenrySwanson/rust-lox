@@ -14,23 +14,19 @@ pub enum Value {
     Obj(GcPtr<HeapObject>),
 }
 
-pub struct LoxFunctionData {
-    pub name: InternedString,
-    pub arity: usize,
-    pub chunk: Rc<Chunk>,
-}
-
 pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
 
-pub struct NativeFnData {
-    pub name: InternedString,
-    pub arity: usize,
-    pub function: NativeFnType,
-}
-
 pub enum HeapObject {
-    LoxFunction(LoxFunctionData),
-    NativeFunction(NativeFnData),
+    LoxFunction {
+        name: InternedString,
+        arity: usize,
+        chunk: Rc<Chunk>,
+    },
+    NativeFunction {
+        name: InternedString,
+        arity: usize,
+        function: NativeFnType,
+    },
 }
 
 impl Value {
@@ -66,14 +62,8 @@ impl fmt::Debug for Value {
             Value::Nil => write!(f, "nil"),
             Value::String(s) => s.fmt(f),
             // TODO: make this more informative
-            Value::Obj(handle) => write!(f, "(heap) {:?}", handle.raw_ptr),
+            Value::Obj(handle) => write!(f, "(heap) {:?}", handle),
         }
-    }
-}
-
-impl LoxFunctionData {
-    pub fn new(name: InternedString, arity: usize, chunk: Rc<Chunk>) -> Self {
-        LoxFunctionData { name, arity, chunk }
     }
 }
 
@@ -81,12 +71,12 @@ impl Traceable for HeapObject {
     // TODO return iterator instead? no heap allocation
     fn trace(&self) -> Vec<GcPtr<HeapObject>> {
         match self {
-            HeapObject::LoxFunction(_) => {
+            HeapObject::LoxFunction { .. } => {
                 // nothing to do here; while we do have a reference to a Chunk,
                 // that chunk only has GcStrong references to heap objects
                 vec![]
             }
-            HeapObject::NativeFunction(_) => {
+            HeapObject::NativeFunction { .. } => {
                 // also nothing
                 vec![]
             }
