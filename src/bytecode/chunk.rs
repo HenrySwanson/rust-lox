@@ -1,17 +1,43 @@
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
+use std::rc::Rc;
 
 use super::gc::GcStrong;
 use super::opcode::OpCode;
-use super::value::{HeapObject, Value};
+use super::string_interning::InternedString;
 
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
+pub type LocalIdx = u8;
+
+// Chunk constants are somewhat different from runtime values -- there's
+// no recursion possible, and there's never heap allocation.
+// We do allow string interning though, just for convenience.
+#[derive(Clone)]
+pub enum ChunkConstant {
+    Number(u32),
+    String(InternedString),
+    FnTemplate {
+        name: InternedString,
+        arity: usize,
+        chunk: Rc<Chunk>,
+    },
+}
+
 pub struct Chunk {
     code: Vec<u8>,
-    constants: Vec<Value>,
+    constants: Vec<ChunkConstant>,
     line_nos: Vec<usize>,
+}
 
-    constant_roots: Vec<GcStrong<HeapObject>>,
+impl fmt::Debug for ChunkConstant {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ChunkConstant::Number(n) => write!(f, "{}", n),
+            ChunkConstant::String(s) => write!(f, "\"{}\"", s),
+            ChunkConstant::FnTemplate { name, .. } => write!(f, "<fn {}>", name),
+        }
+    }
 }
 
 impl Chunk {
@@ -20,7 +46,6 @@ impl Chunk {
             code: vec![],
             constants: vec![],
             line_nos: vec![],
-            constant_roots: vec![],
         }
     }
 
@@ -98,24 +123,13 @@ impl Chunk {
         self.write_op_with_u16(OpCode::Loop, jump_distance, line_no);
     }
 
-    pub fn add_constant(&mut self, constant: Value) -> ConstantIdx {
+    pub fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {
         self.constants.push(constant);
         let idx = self.constants.len() - 1;
         idx.try_into().expect("Too many constants")
     }
 
-    pub fn add_heap_constant(&mut self, gc_handle: GcStrong<HeapObject>) -> ConstantIdx {
-        // Add it to the constant table like any other
-        let value = Value::Obj(gc_handle.downgrade());
-        let idx = self.add_constant(value);
-
-        // Stash the strong handle in the chunk, so it doesn't get garbage-collected
-        self.constant_roots.push(gc_handle);
-
-        idx
-    }
-
-    pub fn lookup_constant(&self, idx: ConstantIdx) -> Value {
+    pub fn lookup_constant(&self, idx: ConstantIdx) -> ChunkConstant {
         self.constants[idx as usize].clone()
     }
 

@@ -133,7 +133,7 @@ impl Runnable for Interpreter {
 impl Runnable for VM {
     fn consume_statements(&mut self, stmts: Vec<ast::Stmt>) -> RunResult {
         // Compile the AST
-        let mut compiler = Compiler::new(self);
+        let mut compiler = Compiler::new(self.borrow_string_table());
 
         let main_fn = match compiler.compile(&stmts) {
             Ok(main_fn) => main_fn,

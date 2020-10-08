@@ -4,11 +4,10 @@ use std::rc::Rc;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
-use super::chunk::Chunk;
+use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};
 use super::opcode::OpCode;
-use super::value::{HeapObject, Value};
-use super::vm::VM;
+use super::string_interning::StringInterner;
 
 // since the GET_LOCAL instruction takes a byte
 const MAX_LOCALS: usize = 256;
@@ -26,10 +25,9 @@ struct Context {
     scope_depth: u32,
 }
 
-pub struct Compiler<'vm> {
-    // We need to be able to access the VM so we can stuff objects into
-    // into the heap. For example, the string "cat" in `var a = "cat"`.
-    vm_ref: &'vm mut VM,
+pub struct Compiler<'strtable> {
+    // We need a string table to stuff strings in
+    string_table: &'strtable mut StringInterner,
     context_stack: Vec<Context>,
 }
 
@@ -49,10 +47,10 @@ impl Context {
 }
 
 // TODO: kill all the panics
-impl<'vm> Compiler<'vm> {
-    pub fn new(vm_ref: &'vm mut VM) -> Self {
+impl<'strtable> Compiler<'strtable> {
+    pub fn new(string_table: &'strtable mut StringInterner) -> Self {
         Compiler {
-            vm_ref,
+            string_table,
             context_stack: vec![],
         }
     }
@@ -210,16 +208,15 @@ impl<'vm> Compiler<'vm> {
 
         // Build the function data
         let ctx = self.context_stack.pop().expect("Context stack empty!");
-        let interned_name = self.vm_ref.intern_string(&fn_decl.name);
+        let interned_name = self.string_table.get_interned(&fn_decl.name);
 
         // Create the function object and stash it in the chunk
-        let fn_obj = HeapObject::LoxFunction {
+        let fn_template = ChunkConstant::FnTemplate {
             name: interned_name,
             arity: fn_decl.params.len(),
             chunk: Rc::new(ctx.chunk),
         };
-        let obj_ptr = self.vm_ref.insert_into_heap(fn_obj);
-        let idx = self.current_chunk().add_heap_constant(obj_ptr);
+        let idx = self.current_chunk().add_constant(fn_template);
         self.current_chunk()
             .write_op_with_u8(OpCode::Constant, idx, line_no);
 
@@ -261,7 +258,7 @@ impl<'vm> Compiler<'vm> {
     fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize) {
         match literal {
             ast::Literal::Number(n) => {
-                let value = Value::Number((*n).into());
+                let value = ChunkConstant::Number(*n);
                 let idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::Constant, idx, line_no);
@@ -271,7 +268,7 @@ impl<'vm> Compiler<'vm> {
                 self.current_chunk().write_op(opcode, line_no);
             }
             ast::Literal::Str(s) => {
-                let value = Value::String(self.vm_ref.intern_string(s));
+                let value = ChunkConstant::String(self.string_table.get_interned(s));
                 let idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::Constant, idx, line_no);
@@ -382,7 +379,7 @@ impl<'vm> Compiler<'vm> {
         if self.get_ctx().scope_depth == 0 {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
-            let value = Value::String(self.vm_ref.intern_string(name));
+            let value = ChunkConstant::String(self.string_table.get_interned(name));
             let global_idx = self.current_chunk().add_constant(value);
             self.current_chunk()
                 .write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
@@ -398,7 +395,7 @@ impl<'vm> Compiler<'vm> {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a GetGlobal instruction.
-                let value = Value::String(self.vm_ref.intern_string(&var.name));
+                let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
                 let global_idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
@@ -427,7 +424,7 @@ impl<'vm> Compiler<'vm> {
             None => {
                 // Global variable; stash the name in the chunk constants, and
                 // emit a SetGlobal instruction.
-                let value = Value::String(self.vm_ref.intern_string(&var.name));
+                let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
                 let global_idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);

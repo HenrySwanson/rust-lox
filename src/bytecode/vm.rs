@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::chunk::{Chunk, ConstantIdx};
+use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcStrong};
 use super::native;
@@ -70,6 +70,10 @@ impl VM {
         vm
     }
 
+    pub fn borrow_string_table(&mut self) -> &mut StringInterner {
+        &mut self.string_table
+    }
+
     pub fn interpret(&mut self, main_chunk: Chunk) -> RuntimeResult<()> {
         // Reset computational state
         self.call_stack.clear();
@@ -128,8 +132,21 @@ impl VM {
                 // Constants
                 OpCode::Constant => {
                     let idx = self.frame_mut().read_u8();
-                    let constant = self.frame().chunk.lookup_constant(idx);
-                    self.push(constant);
+                    let value = match self.frame().chunk.lookup_constant(idx) {
+                        ChunkConstant::Number(n) => Value::Number(n.into()),
+                        ChunkConstant::String(s) => Value::String(s),
+                        ChunkConstant::FnTemplate { name, arity, chunk } => {
+                            // Gotta translate it into a live value
+                            let function = HeapObject::LoxFunction {
+                                name,
+                                arity,
+                                chunk: chunk.clone(),
+                            };
+                            Value::Obj(self.insert_into_heap(function).downgrade())
+                        }
+                    };
+
+                    self.push(value);
                 }
                 OpCode::True => self.push(Value::Boolean(true)),
                 OpCode::False => self.push(Value::Boolean(false)),
@@ -411,7 +428,7 @@ impl VM {
     fn lookup_string(&self, idx: ConstantIdx) -> InternedString {
         let chunk = &self.frame().chunk;
         match chunk.lookup_constant(idx) {
-            Value::String(s) => s,
+            ChunkConstant::String(s) => s,
             _ => panic!("Global table contains non-string"),
         }
     }
