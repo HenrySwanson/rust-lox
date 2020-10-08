@@ -1,8 +1,11 @@
+use super::chunk::ChunkConstant;
+
 #[derive(Debug)]
 pub enum CompilerError {
     LocalAlreadyExists(String),
     LocalUsedInOwnInitializer(String),
     TooManyLocals,
+    TooManyUpvalues,
 }
 
 // TODO how can i get the failed instruction in here?
@@ -17,6 +20,7 @@ pub enum RuntimeError {
     NotACallable,
     WrongArity,
     NativeError(String),
+    UntranslatableConstant(ChunkConstant),
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;

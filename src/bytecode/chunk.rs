@@ -2,13 +2,10 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::rc::Rc;
 
-use super::gc::GcStrong;
 use super::opcode::OpCode;
 use super::string_interning::InternedString;
 
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
-
-pub type LocalIdx = u8;
 
 // Chunk constants are somewhat different from runtime values -- there's
 // no recursion possible, and there's never heap allocation.
@@ -21,6 +18,7 @@ pub enum ChunkConstant {
         name: InternedString,
         arity: usize,
         chunk: Rc<Chunk>,
+        upvalue_count: usize,
     },
 }
 
@@ -177,6 +175,8 @@ impl Chunk {
             };
         }
 
+        let mut variable_args_size: Option<usize> = None;
+
         match instruction {
             // Constants
             OpCode::Constant => {
@@ -236,6 +236,27 @@ impl Chunk {
                 let distance = self.read_u16(offset + 1);
                 print_two!("OP_LOOP", distance);
             }
+            // Closures and Upvalues
+            OpCode::MakeClosure => {
+                let idx = self.read_u8(offset + 1);
+                let constant = self.lookup_constant(idx);
+                let upvalue_count = match constant {
+                    ChunkConstant::FnTemplate { upvalue_count, .. } => upvalue_count,
+                    _ => todo!(),
+                };
+
+                print_three!("OP_MAKE_CLOSURE", idx, constant);
+                // TODO print upvalues in some way...
+                variable_args_size = Some(1 + 2 * upvalue_count);
+            }
+            OpCode::GetUpvalue => {
+                let idx = self.read_u8(offset + 1);
+                print_two!("OP_GET_UPVALUE", idx);
+            }
+            OpCode::SetUpvalue => {
+                let idx = self.read_u8(offset + 1);
+                print_two!("OP_SET_UPVALUE", idx);
+            }
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),
@@ -243,6 +264,10 @@ impl Chunk {
             OpCode::Return => println!("OP_RETURN"),
         };
 
-        offset + instruction.arg_size_in_bytes() + 1
+        // Exactly one of these should be set
+        let arg_bytes = variable_args_size.xor(instruction.arg_size_in_bytes());
+
+        // +1 for the instruction itself
+        offset + 1 + arg_bytes.expect("Ill-defined argument size")
     }
 }

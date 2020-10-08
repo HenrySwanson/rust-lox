@@ -58,13 +58,13 @@ impl VM {
         // Define natives
         for (name, arity, function) in native::get_natives().iter().copied() {
             let name = vm.intern_string(name);
-            let native_fn = HeapObject::NativeFunction {
+            let native_fn = vm.make_heap_value(HeapObject::NativeFunction {
                 name: name.clone(),
                 arity,
                 function,
-            };
-            let obj_ptr = vm.insert_into_heap(native_fn);
-            vm.globals.insert(name, Value::Obj(obj_ptr.downgrade()));
+            });
+
+            vm.globals.insert(name, native_fn);
         }
 
         vm
@@ -82,12 +82,11 @@ impl VM {
         // Make main() a real value and push it onto the stack
         let main_name = self.intern_string("<main>");
         let main_chunk = Rc::new(main_chunk);
-        let main_fn = HeapObject::LoxFunction {
+        let main_value = self.make_heap_value(HeapObject::LoxClosure {
             name: main_name.clone(),
             arity: 0,
             chunk: main_chunk.clone(),
-        };
-        let main_value = Value::Obj(self.insert_into_heap(main_fn).downgrade());
+        });
 
         self.push(main_value);
 
@@ -135,15 +134,7 @@ impl VM {
                     let value = match self.frame().chunk.lookup_constant(idx) {
                         ChunkConstant::Number(n) => Value::Number(n.into()),
                         ChunkConstant::String(s) => Value::String(s),
-                        ChunkConstant::FnTemplate { name, arity, chunk } => {
-                            // Gotta translate it into a live value
-                            let function = HeapObject::LoxFunction {
-                                name,
-                                arity,
-                                chunk: chunk.clone(),
-                            };
-                            Value::Obj(self.insert_into_heap(function).downgrade())
-                        }
+                        c => return Err(RuntimeError::UntranslatableConstant(c.clone())),
                     };
 
                     self.push(value);
@@ -242,6 +233,37 @@ impl VM {
                     let jump_by = usize::from(self.frame_mut().read_u16());
                     self.frame_mut().ip -= jump_by;
                 }
+                // Closures and Upvalues
+                OpCode::MakeClosure => {
+                    // Load a constant; we can only proceed if it's a FnTemplate
+                    let idx = self.frame_mut().read_u8();
+                    let closure_obj = match self.frame().chunk.lookup_constant(idx) {
+                        ChunkConstant::FnTemplate {
+                            name,
+                            arity,
+                            chunk,
+                            upvalue_count,
+                        } => {
+                            // Load the upvalue definitions TODO actually do something with these
+                            for i in 0..upvalue_count {
+                                let kind = self.frame_mut().read_u8();
+                                let idx = self.frame_mut().read_u8();
+                            }
+
+                            HeapObject::LoxClosure {
+                                name,
+                                arity,
+                                chunk: chunk.clone(),
+                                // TODO upvalues!
+                            }
+                        }
+                        _ => return Err(RuntimeError::NotACallable),
+                    };
+
+                    let closure_value = self.make_heap_value(closure_obj);
+                    self.push(closure_value);
+                }
+                OpCode::GetUpvalue | OpCode::SetUpvalue => todo!(),
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
@@ -254,12 +276,13 @@ impl VM {
 
                     // How we call it depends a lot on the object -- do a big match
                     match self.heap.get(&callable_ptr) {
-                        HeapObject::LoxFunction { name, arity, chunk } => {
+                        HeapObject::LoxClosure { name, arity, chunk } => {
                             // Check that the arity matches, and push the new frame
                             if *arity != arg_count {
                                 return Err(RuntimeError::WrongArity);
                             }
 
+                            // Cloned here to avoid borrow warning
                             let name = name.clone();
                             let chunk = chunk.clone();
                             self.push_new_frame(arg_count, name, chunk);
@@ -366,6 +389,11 @@ impl VM {
 
     pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
         self.heap.insert(obj)
+    }
+
+    pub fn make_heap_value(&mut self, obj: HeapObject) -> Value {
+        let gc_ptr = self.insert_into_heap(obj);
+        Value::Obj(gc_ptr.downgrade())
     }
 
     // -- other helpers --

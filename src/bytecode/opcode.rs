@@ -30,6 +30,10 @@ pub enum OpCode {
     Jump,
     JumpIfFalse,
     Loop,
+    // Closures and Upvalues
+    MakeClosure,
+    GetUpvalue,
+    SetUpvalue,
     // Other
     Call,
     Return,
@@ -38,8 +42,8 @@ pub enum OpCode {
 }
 
 impl OpCode {
-    pub fn arg_size_in_bytes(&self) -> usize {
-        match self {
+    pub fn arg_size_in_bytes(&self) -> Option<usize> {
+        let arg_bytes = match self {
             OpCode::Constant => 1,
             OpCode::True | OpCode::False | OpCode::Nil => 0,
             OpCode::Add | OpCode::Subtract | OpCode::Multiply | OpCode::Divide | OpCode::Negate => {
@@ -50,8 +54,12 @@ impl OpCode {
             OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => 1,
             OpCode::GetLocal | OpCode::SetLocal => 1,
             OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => 2,
+            OpCode::MakeClosure => return None, // variable-length
+            OpCode::GetUpvalue | OpCode::SetUpvalue => 1,
             OpCode::Call => 1,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
-        }
+        };
+
+        Some(arg_bytes)
     }
 }

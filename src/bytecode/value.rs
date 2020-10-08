@@ -17,7 +17,7 @@ pub enum Value {
 pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
 
 pub enum HeapObject {
-    LoxFunction {
+    LoxClosure {
         name: InternedString,
         arity: usize,
         chunk: Rc<Chunk>,
@@ -71,9 +71,8 @@ impl Traceable for HeapObject {
     // TODO return iterator instead? no heap allocation
     fn trace(&self) -> Vec<GcPtr<HeapObject>> {
         match self {
-            HeapObject::LoxFunction { .. } => {
-                // nothing to do here; while we do have a reference to a Chunk,
-                // that chunk only has GcStrong references to heap objects
+            HeapObject::LoxClosure { .. } => {
+                // nothing to do here (yet!)
                 vec![]
             }
             HeapObject::NativeFunction { .. } => {

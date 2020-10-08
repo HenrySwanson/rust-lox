@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::rc::Rc;
 
 use crate::common::ast;
@@ -13,15 +13,33 @@ use super::string_interning::StringInterner;
 const MAX_LOCALS: usize = 256;
 type LocalIdx = u8;
 
+const MAX_UPVALUES: usize = 256;
+type UpvalueIdx = u8;
+
 struct Local {
     name: String,
     scope_depth: u32,
     initialized: bool,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum Upvalue {
+    // A local defined in the immediately enclosing scope
+    Immediate(LocalIdx),
+    // An upvalue belonging to the immediately enclosing scope
+    Recursive(UpvalueIdx),
+}
+
+enum VariableLocator {
+    Local(LocalIdx),
+    Upvalue(UpvalueIdx),
+    Global,
+}
+
 struct Context {
     chunk: Chunk,
     locals: Vec<Local>,
+    upvalues: Vec<Upvalue>,
     scope_depth: u32,
 }
 
@@ -41,8 +59,67 @@ impl Context {
         Context {
             chunk: Chunk::new(),
             locals: vec![reserved_local],
+            upvalues: vec![],
             scope_depth: 0,
         }
+    }
+
+    fn find_local(&self, name: &str) -> CompilerResult<Option<LocalIdx>> {
+        // Walking the array backwards is more efficient, I suppose
+        for (idx, local) in self.locals.iter().enumerate().rev() {
+            // note: idx is measured from the _bottom_ of the stack
+            if local.name == name {
+                if !local.initialized {
+                    return Err(CompilerError::LocalUsedInOwnInitializer(name.to_owned()));
+                }
+
+                return Ok(Some(idx.try_into().unwrap()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn add_new_local(&mut self, name: &str) -> CompilerResult<()> {
+        if self.locals.len() == MAX_LOCALS {
+            return Err(CompilerError::TooManyLocals);
+        }
+
+        for local in self.locals.iter().rev() {
+            if local.scope_depth == self.scope_depth && local.name == name {
+                return Err(CompilerError::LocalAlreadyExists(name.to_owned()));
+            }
+        }
+
+        self.locals.push(Local {
+            name: name.to_owned(),
+            scope_depth: self.scope_depth,
+            initialized: false,
+        });
+
+        Ok(())
+    }
+
+    fn add_upvalue(&mut self, key: Upvalue) -> CompilerResult<UpvalueIdx> {
+        for (i, upvalue) in self.upvalues.iter().enumerate() {
+            if key == *upvalue {
+                return Ok(i.try_into().unwrap());
+            }
+        }
+
+        // Didn't find it, let's add it if possible
+        if self.upvalues.len() == MAX_UPVALUES {
+            return Err(CompilerError::TooManyUpvalues);
+        }
+
+        self.upvalues.push(key);
+        let idx = self.upvalues.len() - 1;
+
+        Ok(idx.try_into().unwrap())
+    }
+
+    fn mark_last_local_initialized(&mut self) {
+        self.locals.last_mut().unwrap().initialized = true;
     }
 }
 
@@ -66,10 +143,11 @@ impl<'strtable> Compiler<'strtable> {
         // Return, to exit the VM
         self.current_chunk().write_op(OpCode::Return, 0);
 
-        self.print_chunk("<main>"); // for debugging
-
         // Return the chunk defining main()
         let root_state = self.context_stack.pop().expect("Context stack empty!");
+
+        self.print_chunk("<main>", &root_state.chunk); // for debugging
+
         Ok(root_state.chunk)
     }
 
@@ -181,7 +259,7 @@ impl<'strtable> Compiler<'strtable> {
         // appropriate name before actually compiling the function.
         self.declare_variable(&fn_decl.name)?;
         if self.get_ctx().scope_depth != 0 {
-            self.mark_last_local_initialized();
+            self.get_ctx_mut().mark_last_local_initialized();
         }
 
         // Create the new compiler context
@@ -203,24 +281,35 @@ impl<'strtable> Compiler<'strtable> {
             .write_op(OpCode::Return, fn_decl.body.span.hi.line_no);
 
         // no need to end scope, we're just killing this compiler context completely
-
-        self.print_chunk(&fn_decl.name); // for debugging
-
-        // Build the function data
         let ctx = self.context_stack.pop().expect("Context stack empty!");
-        let interned_name = self.string_table.get_interned(&fn_decl.name);
 
-        // Create the function object and stash it in the chunk
+        self.print_chunk(&fn_decl.name, &ctx.chunk); // for debugging
+
+        // Build the function template and stash it in the chunk
         let fn_template = ChunkConstant::FnTemplate {
-            name: interned_name,
+            name: self.string_table.get_interned(&fn_decl.name),
             arity: fn_decl.params.len(),
             chunk: Rc::new(ctx.chunk),
+            upvalue_count: ctx.upvalues.len(),
         };
+
+        // Unlike regular constants, we load this with MAKE_CLOSURE
+        // TODO should i have a separate list for these in the chunk?
         let idx = self.current_chunk().add_constant(fn_template);
         self.current_chunk()
-            .write_op_with_u8(OpCode::Constant, idx, line_no);
+            .write_op_with_u8(OpCode::MakeClosure, idx, line_no);
 
-        // Put it into the variable
+        // Now encode all the upvalues that this closure should have
+        for upvalue in ctx.upvalues.iter().cloned() {
+            let bytes = match upvalue {
+                Upvalue::Immediate(idx) => [1, idx],
+                Upvalue::Recursive(idx) => [0, idx],
+            };
+            self.current_chunk().write_u8(bytes[0], line_no);
+            self.current_chunk().write_u8(bytes[1], line_no);
+        }
+
+        // Finally, define the function variable
         self.define_variable(&fn_decl.name, line_no)?;
 
         Ok(())
@@ -368,7 +457,7 @@ impl<'strtable> Compiler<'strtable> {
             // nothing to do
         } else {
             // Add the local to the compiler's list.
-            self.add_local(name)?;
+            self.get_ctx_mut().add_new_local(name)?;
         }
 
         Ok(())
@@ -384,26 +473,28 @@ impl<'strtable> Compiler<'strtable> {
             self.current_chunk()
                 .write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
         } else {
-            self.mark_last_local_initialized();
+            self.get_ctx_mut().mark_last_local_initialized();
         }
 
         Ok(())
     }
 
     fn get_variable(&mut self, var: &ast::VariableRef, line_no: usize) -> CompilerResult<()> {
-        match self.find_local(&var.name)? {
-            None => {
-                // Global variable; stash the name in the chunk constants, and
-                // emit a GetGlobal instruction.
+        match self.resolve_variable(&var.name)? {
+            VariableLocator::Global => {
+                // Stash the name in the chunk constants, and emit a GetGlobal instruction.
                 let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
                 let global_idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
             }
-            Some(idx) => {
-                // Local variable
+            VariableLocator::Local(idx) => {
                 self.current_chunk()
                     .write_op_with_u8(OpCode::GetLocal, idx, line_no);
+            }
+            VariableLocator::Upvalue(idx) => {
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::GetUpvalue, idx, line_no);
             }
         }
 
@@ -420,19 +511,21 @@ impl<'strtable> Compiler<'strtable> {
         // expression on the stack.
         self.compile_expression(expr)?;
 
-        match self.find_local(&var.name)? {
-            None => {
-                // Global variable; stash the name in the chunk constants, and
-                // emit a SetGlobal instruction.
+        match self.resolve_variable(&var.name)? {
+            VariableLocator::Global => {
+                // Stash the name in the chunk constants, and emit a SetGlobal instruction.
                 let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
                 let global_idx = self.current_chunk().add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
             }
-            Some(idx) => {
-                // Local variable
+            VariableLocator::Local(idx) => {
                 self.current_chunk()
                     .write_op_with_u8(OpCode::SetLocal, idx, line_no);
+            }
+            VariableLocator::Upvalue(idx) => {
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::SetUpvalue, idx, line_no);
             }
         }
 
@@ -479,56 +572,45 @@ impl<'strtable> Compiler<'strtable> {
         }
     }
 
-    fn add_local(&mut self, name: &str) -> CompilerResult<()> {
-        let state = self.get_ctx_mut();
-        let scope_depth = state.scope_depth;
-        let locals = &mut state.locals;
-
-        if locals.len() == MAX_LOCALS {
-            return Err(CompilerError::TooManyLocals);
-        }
-
-        for local in locals.iter().rev() {
-            if local.scope_depth == scope_depth && local.name == name {
-                return Err(CompilerError::LocalAlreadyExists(name.to_owned()));
+    fn resolve_variable(&mut self, name: &str) -> CompilerResult<VariableLocator> {
+        // First, check if it's local to any of our enclosing scopes
+        let mut found_at = None;
+        for (stack_idx, context) in self.context_stack.iter().enumerate().rev() {
+            if let Some(local_idx) = context.find_local(name)? {
+                found_at = Some((stack_idx, local_idx));
+                break;
             }
         }
 
-        let new_local = Local {
-            name: name.to_owned(),
-            scope_depth,
-            initialized: false,
+        // If we haven't found it, it's hopefully global. Otherwise,
+        // we know where it was defined.
+        // TODO mark local captured
+        let (root_idx, local_idx) = match found_at {
+            Some(t) => t,
+            None => return Ok(VariableLocator::Global),
         };
-        locals.push(new_local);
 
-        Ok(())
-    }
-
-    fn find_local(&self, name: &str) -> CompilerResult<Option<LocalIdx>> {
-        let locals = &self.get_ctx().locals;
-
-        // Walking the array backwards is more efficient, I suppose
-        for (idx, local) in locals.iter().enumerate().rev() {
-            // note: idx is measured from the _bottom_ of the stack
-            if local.name == name {
-                if !local.initialized {
-                    return Err(CompilerError::LocalUsedInOwnInitializer(name.to_owned()));
-                }
-                return Ok(Some(idx as LocalIdx));
-            }
+        // If it's in the topmost context, this is just a local. Easy.
+        if root_idx == self.context_stack.len() - 1 {
+            return Ok(VariableLocator::Local(local_idx));
         }
 
-        // Not found, hopefully it's global.
-        Ok(None)
-    }
+        // Start inserting upvalues into each of the contexts in between.
+        // The first upvalue we mark is an Immediate, but after that, it's all Recursive
+        let mut upvalue_idx =
+            self.context_stack[root_idx + 1].add_upvalue(Upvalue::Immediate(local_idx))?;
+        for context in self.context_stack[root_idx + 2..].iter_mut() {
+            upvalue_idx = context.add_upvalue(Upvalue::Recursive(upvalue_idx))?;
+        }
 
-    fn mark_last_local_initialized(&mut self) {
-        self.get_ctx_mut().locals.last_mut().unwrap().initialized = true;
+        // If we made it here, it means this variable is local to some enclosing scope,
+        // so it's located in our upvalue array.
+        Ok(VariableLocator::Upvalue(upvalue_idx))
     }
 
     #[allow(unused_variables)]
-    fn print_chunk(&self, name: &str) {
+    fn print_chunk(&self, name: &str, chunk: &Chunk) {
         #[cfg(feature = "print-chunks")]
-        self.get_ctx().chunk.disassemble(name);
+        chunk.disassemble(name);
     }
 }
