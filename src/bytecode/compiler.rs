@@ -22,8 +22,10 @@ struct Local {
     initialized: bool,
 }
 
+// TODO i feel like this shouldn't be exposed, but it's part of the chunk
+// data, so I guess it's unavoidable :\
 #[derive(Clone, PartialEq, Eq)]
-enum Upvalue {
+pub enum Upvalue {
     // A local defined in the immediately enclosing scope
     Immediate(LocalIdx),
     // An upvalue belonging to the immediately enclosing scope

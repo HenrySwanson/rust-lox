@@ -246,7 +246,16 @@ impl Chunk {
                 };
 
                 print_three!("OP_MAKE_CLOSURE", idx, constant);
-                // TODO print upvalues in some way...
+                for i in 0..upvalue_count {
+                    let kind = self.read_u8(offset + 2 + 2 * i);
+                    let idx = self.read_u8(offset + 2 + 2 * i + 1);
+                    print!("{:37}: ", i);
+                    match kind {
+                        1 => println!("local   #{}", idx),
+                        0 => println!("upvalue #{}", idx),
+                        _ => println!("???     #{}", idx),
+                    };
+                }
                 variable_args_size = Some(1 + 2 * upvalue_count);
             }
             OpCode::GetUpvalue => {

@@ -21,6 +21,7 @@ pub enum RuntimeError {
     WrongArity,
     NativeError(String),
     UntranslatableConstant(ChunkConstant),
+    BadUpvalue,
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;

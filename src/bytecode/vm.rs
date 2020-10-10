@@ -1,19 +1,22 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
+use super::compiler::Upvalue as UpvalueDef;
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{HeapObject, Value};
+use super::value::{HeapObject, LiveUpvalue, Value};
 
 struct CallFrame {
     ip: usize,
     base_ptr: usize,
     name: InternedString,
     chunk: Rc<Chunk>,
+    upvalues: Rc<Vec<LiveUpvalue>>,
 }
 
 pub struct VM {
@@ -42,6 +45,15 @@ impl CallFrame {
         let result = self.chunk.try_read_op(self.ip);
         self.ip += 1;
         result
+    }
+
+    fn try_read_upvalue(&mut self) -> Result<UpvalueDef, u8> {
+        let kind = self.read_u8();
+        match kind {
+            1 => Ok(UpvalueDef::Immediate(self.read_u8())),
+            0 => Ok(UpvalueDef::Recursive(self.read_u8())),
+            _ => Err(kind),
+        }
     }
 }
 
@@ -85,6 +97,7 @@ impl VM {
             name: main_name,
             arity: 0,
             chunk: Rc::new(main_chunk),
+            upvalues: Rc::new(vec![]),
         });
 
         self.push(main_fn);
@@ -243,17 +256,32 @@ impl VM {
                             chunk,
                             upvalue_count,
                         } => {
-                            // Load the upvalue definitions TODO actually do something with these
+                            // Read the upvalues
+                            let mut upvalues = vec![];
                             for i in 0..upvalue_count {
-                                let kind = self.frame_mut().read_u8();
-                                let idx = self.frame_mut().read_u8();
+                                let upvalue = match self.frame_mut().try_read_upvalue() {
+                                    Ok(u) => match u {
+                                        UpvalueDef::Immediate(idx) => {
+                                            // Immediate means the upvalue is a local of the parent.
+                                            // But we are (right now) in the frame of this closure's parent.
+                                            // Remember that idx is relative to the parent's frame.
+                                            LiveUpvalue::new(self.frame().base_ptr + idx as usize)
+                                        }
+                                        UpvalueDef::Recursive(idx) => {
+                                            // Otherwise, it's one of our upvalues
+                                            self.frame().upvalues[idx as usize].clone()
+                                        }
+                                    },
+                                    Err(_) => return Err(RuntimeError::BadUpvalue),
+                                };
+                                upvalues.push(upvalue);
                             }
 
                             HeapObject::LoxClosure {
                                 name,
                                 arity,
                                 chunk: chunk.clone(),
-                                // TODO upvalues!
+                                upvalues: Rc::new(upvalues),
                             }
                         }
                         _ => return Err(RuntimeError::NotACallable),
@@ -262,7 +290,24 @@ impl VM {
                     let closure_value = self.make_heap_value(closure_obj);
                     self.push(closure_value);
                 }
-                OpCode::GetUpvalue | OpCode::SetUpvalue => todo!(),
+                OpCode::GetUpvalue => {
+                    let idx = self.frame_mut().read_u8() as usize;
+                    let value = match self.frame().upvalues[idx].get_if_closed() {
+                        Ok(v) => v,
+                        Err(idx) => self.stack[idx].clone(),
+                    };
+
+                    self.push(value);
+                }
+                OpCode::SetUpvalue => {
+                    let idx = self.frame_mut().read_u8() as usize;
+                    let value = self.peek(0)?;
+
+                    match self.frame().upvalues[idx].set_if_closed(&value) {
+                        Ok(()) => {}
+                        Err(idx) => self.stack[idx] = value,
+                    }
+                }
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
@@ -306,12 +351,19 @@ impl VM {
         }
     }
 
-    fn push_new_frame(&mut self, arg_count: usize, name: InternedString, chunk: Rc<Chunk>) {
+    fn push_new_frame(
+        &mut self,
+        arg_count: usize,
+        name: InternedString,
+        chunk: Rc<Chunk>,
+        upvalues: Rc<Vec<LiveUpvalue>>,
+    ) {
         let new_frame = CallFrame {
             ip: 0,
             base_ptr: self.stack.len() - (arg_count + 1),
             name,
             chunk,
+            upvalues,
         };
         self.call_stack.push(new_frame);
     }
@@ -364,13 +416,18 @@ impl VM {
 
         // How we call it depends on the object -- do a big match
         match &*heap_obj_ref {
-            HeapObject::LoxClosure { name, arity, chunk } => {
+            HeapObject::LoxClosure {
+                name,
+                arity,
+                chunk,
+                upvalues,
+            } => {
                 // Check that the arity matches, and push the new frame
                 if *arity != arg_count {
                     return Err(RuntimeError::WrongArity);
                 }
 
-                self.push_new_frame(arg_count, name.clone(), chunk.clone());
+                self.push_new_frame(arg_count, name.clone(), chunk.clone(), upvalues.clone());
             }
             HeapObject::NativeFunction {
                 arity, function, ..
