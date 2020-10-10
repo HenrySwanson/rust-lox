@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -122,6 +121,8 @@ impl VM {
 
     fn run(&mut self) -> RuntimeResult<()> {
         loop {
+            self.collect_garbage();
+
             #[cfg(feature = "trace-execution")]
             {
                 let frame = self.frame_mut();
@@ -483,6 +484,28 @@ impl VM {
         }
 
         Ok(())
+    }
+
+    fn collect_garbage(&mut self) {
+        // Everything on the stack is reachable
+        for value in self.stack.iter() {
+            value.mark_internals();
+        }
+
+        // All globals are also reachable
+        for value in self.globals.values() {
+            value.mark_internals();
+        }
+
+        // Call frames contain reachable objects, but they should only contain
+        // objects that are also reachable through the closure they correspond to,
+        // which is on the stack and thus accessible.
+        // Same with open upvalues.
+
+        // Objects might point to strings, so let's kill the objects first, to
+        // claim more strings.
+        self.heap.sweep();
+        self.string_table.clean();
     }
 
     // -- other helpers --

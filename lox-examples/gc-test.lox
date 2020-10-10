@@ -1,0 +1,16 @@
+fun apply(f, x) {
+  fun inner() {
+    f(x);
+  }
+  return inner;
+}
+
+fun print_something(x) {
+  print(x);
+}
+
+var print_hello = apply(print_something, "Hello");
+// erase print_something and apply
+print_something = apply = nil;
+
+print_hello();

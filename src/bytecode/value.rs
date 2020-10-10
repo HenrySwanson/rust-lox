@@ -53,6 +53,13 @@ impl Value {
             _ => true,
         }
     }
+
+    pub fn mark_internals(&self) {
+        match self {
+            Value::Number(_) | Value::Boolean(_) | Value::Nil | Value::String(_) => {}
+            Value::Obj(ptr) => ptr.mark(),
+        }
+    }
 }
 
 impl PartialEq<Value> for Value {
@@ -85,14 +92,16 @@ impl fmt::Debug for Value {
 }
 
 impl Traceable for HeapObject {
-    // TODO return iterator instead? no heap allocation
     fn trace(&self) {
         match self {
-            HeapObject::LoxClosure { .. } => {
-                // nothing to do here (yet!)
+            HeapObject::LoxClosure { upvalues, .. } => {
+                // A closed upvalue owns an object, which must be marked.
+                for u in upvalues.iter() {
+                    u.mark_internals();
+                }
             }
             HeapObject::NativeFunction { .. } => {
-                // also nothing
+                // nothing to do here
             }
         }
     }
@@ -132,9 +141,16 @@ impl LiveUpvalue {
     }
 
     pub fn get_open_idx(&self) -> Option<usize> {
-        match &mut *self.location.borrow_mut() {
+        match &*self.location.borrow() {
             UpvalueType::Open(idx) => Some(*idx),
             UpvalueType::Closed(_) => None,
+        }
+    }
+
+    pub fn mark_internals(&self) {
+        match &*self.location.borrow() {
+            UpvalueType::Open(_) => {}
+            UpvalueType::Closed(value) => value.mark_internals(),
         }
     }
 }
