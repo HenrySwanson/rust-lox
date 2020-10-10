@@ -1,190 +1,147 @@
-use std::collections::{HashMap, HashSet};
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
 
-pub struct GcHeap<T> {
-    // The object itself lives at the pointer location; the Rc is only used
-    // for reference counting.
-    objects: HashMap<*mut T, Rc<()>>,
-}
-
-// Handle referring to an object in the heap. This handle doesn't root the object,
-// so it is up to the user to only hold onto GcPtrs that correspond to reachable
-// objects.
+// Handle referring to an object in the heap. This handle doesn't "root" the object;
+// if a sweep is made and the object is not marked, then the object will be deleted.
+// It is up to the user to mark all objects reachable through a GcPtr
 pub struct GcPtr<T> {
-    raw_ptr: *mut T,
+    ptr: Rc<GcBox<T>>,
 }
 
-// Like GcPtr, but also roots the object (so that it will not be garbage collected).
-pub struct GcStrong<T> {
-    ptr: GcPtr<T>,   // rather this than raw_ptr so that we can impl AsRef
-    counter: Rc<()>, // reference counting for the pointer
+// Owner of a heap-allocated object; contains the object and some garbage-collection
+// metadata.
+pub struct GcBox<T> {
+    object: RefCell<Option<T>>,
+    marked: Cell<bool>,
+}
+
+// Collection of GcBoxes, essentially. Responsible for the "sweep" in mark-and-sweep.
+pub struct GcHeap<T: Traceable> {
+    // Since the Rc needs to own the box, we really only hold GcPtrs. Every object
+    // will be in this list exactly once.
+    objects: Vec<GcPtr<T>>,
 }
 
 pub trait Traceable {
-    fn trace(&self) -> Vec<GcPtr<Self>>
-    where
-        Self: Sized;
+    // This function must obey the following criterion: if the object can produce a
+    // GcPtr in _any_ way, that pointer must have mark() called on it. Failure to do
+    // so may result in pointers to garbage.
+    // (Safe garbage though; it'll just cause a panic.)
+    fn trace(&self);
 }
 
-impl<T: Traceable> GcHeap<T> {
-    pub fn new() -> Self {
-        GcHeap {
-            objects: HashMap::new(),
+impl<T: Traceable> GcPtr<T> {
+    pub fn try_borrow(&self) -> Ref<Option<T>> {
+        self.ptr.object.borrow()
+    }
+
+    pub fn borrow(&self) -> Ref<T> {
+        Ref::map(self.try_borrow(), |option| {
+            option.as_ref().expect("Object was garbage collected!")
+        })
+    }
+
+    pub fn try_borrow_mut(&self) -> RefMut<Option<T>> {
+        self.ptr.object.borrow_mut()
+    }
+
+    pub fn borrow_mut(&mut self) -> RefMut<T> {
+        RefMut::map(self.try_borrow_mut(), |option| {
+            option.as_mut().expect("Object was garbage collected!")
+        })
+    }
+
+    pub fn mark(&self) {
+        // Only recurse if we're not marked yet
+        if !self.ptr.marked.get() {
+            self.ptr.marked.set(true);
+            self.borrow().trace();
         }
     }
 
-    pub fn insert(&mut self, obj: T) -> GcStrong<T> {
-        let ptr = Box::into_raw(Box::new(obj));
-        let rc = Rc::new(());
-
-        self.objects.insert(ptr, rc.clone());
-
-        GcStrong {
-            ptr: GcPtr { raw_ptr: ptr },
-            counter: rc,
-        }
+    fn unmark(&self) {
+        self.ptr.marked.set(false);
     }
 
-    pub fn try_get(&self, handle: impl AsRef<GcPtr<T>>) -> Option<&T> {
-        let raw_ptr = handle.as_ref().raw_ptr;
-        if self.objects.contains_key(&raw_ptr) {
-            let t_ref: &T = unsafe { &*raw_ptr };
-            Some(t_ref)
-        } else {
-            None
-        }
+    fn is_marked(&self) -> bool {
+        self.ptr.marked.get()
     }
 
-    pub fn get(&self, handle: impl AsRef<GcPtr<T>>) -> &T {
-        self.try_get(handle).expect("Object not found in heap")
-    }
-
-    pub fn try_get_mut(&mut self, handle: impl AsRef<GcPtr<T>>) -> Option<&mut T> {
-        let raw_ptr = handle.as_ref().raw_ptr;
-        if self.objects.contains_key(&raw_ptr) {
-            let t_ref: &mut T = unsafe { &mut *raw_ptr };
-            Some(t_ref)
-        } else {
-            None
-        }
-    }
-
-    pub fn get_mut(&mut self, handle: impl AsRef<GcPtr<T>>) -> &mut T {
-        self.try_get_mut(handle).expect("Object not found in heap")
-    }
-
-    pub fn try_upgrade(&self, handle: impl AsRef<GcPtr<T>>) -> Option<GcStrong<T>> {
-        let raw_ptr = handle.as_ref().raw_ptr;
-        match self.objects.get(&raw_ptr) {
-            Some(rc) => Some(GcStrong {
-                ptr: GcPtr { raw_ptr },
-                counter: rc.clone(),
-            }),
-            None => None,
-        }
-    }
-
-    pub fn upgrade(&self, handle: impl AsRef<GcPtr<T>>) -> GcStrong<T> {
-        self.try_upgrade(handle).expect("Object not found in heap")
-    }
-
-    // TODO we could get fancy and do a tricolor thing
-    pub fn collect_garbage(&mut self) {
-        let mut frontier: Vec<*mut T> = vec![];
-
-        // Create the frontier set; our objects with Rc-count > 1.
-        for (ptr, counter) in self.objects.iter() {
-            if Rc::strong_count(counter) > 1 {
-                frontier.push(*ptr);
-            }
-        }
-
-        // Continuously explore the frontier, marking it as we go
-        #[allow(clippy::mutable_key_type)]
-        let mut marked = HashSet::new();
-        while let Some(ptr) = frontier.pop() {
-            // Mark the node, but if it's already marked, don't recurse on it
-            if marked.insert(ptr) {
-                let obj = unsafe { &*ptr };
-                for gc_ptr in obj.trace() {
-                    frontier.push(gc_ptr.raw_ptr);
-                }
-            }
-        }
-
-        // Now kill all the objects that aren't marked
-        self.objects.retain(|ptr, _| marked.contains(ptr));
+    fn discard(&mut self) {
+        // Get the Option<T> the object lives in, and then take it
+        self.try_borrow_mut().take();
     }
 }
-
-impl<T> Drop for GcHeap<T> {
-    fn drop(&mut self) {
-        for ptr in self.objects.keys() {
-            let b = unsafe { Box::from_raw(*ptr) };
-            drop(b)
-        }
-    }
-}
-
-// ---- GcPtr impls ----
 
 impl<T> fmt::Debug for GcPtr<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.raw_ptr)
+        write!(f, "{:?}", Rc::as_ptr(&self.ptr))
     }
 }
 
 impl<T> Clone for GcPtr<T> {
     fn clone(&self) -> Self {
         GcPtr {
-            raw_ptr: self.raw_ptr,
+            ptr: self.ptr.clone(),
         }
     }
 }
 
 impl<T> PartialEq<GcPtr<T>> for GcPtr<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.raw_ptr == other.raw_ptr
+        Rc::ptr_eq(&self.ptr, &other.ptr)
     }
 }
 
 impl<T> Eq for GcPtr<T> {}
 
-impl<T> AsRef<GcPtr<T>> for GcPtr<T> {
-    fn as_ref(&self) -> &GcPtr<T> {
-        &self
+impl<T: Traceable> GcHeap<T> {
+    pub fn new() -> Self {
+        GcHeap { objects: vec![] }
     }
-}
 
-// ---- GcStrong impls ----
+    pub fn insert(&mut self, obj: T) -> GcPtr<T> {
+        let gc_box = GcBox {
+            object: RefCell::new(Some(obj)),
+            marked: Cell::new(false),
+        };
 
-impl<T> GcStrong<T> {
-    pub fn downgrade(&self) -> GcPtr<T> {
-        self.ptr.clone()
+        // Before we hand out the pointer, make a copy for ourselves
+        let gc_ptr = GcPtr {
+            ptr: Rc::new(gc_box),
+        };
+
+        self.objects.push(gc_ptr.clone());
+        gc_ptr
     }
-}
 
-impl<T> Clone for GcStrong<T> {
-    fn clone(&self) -> Self {
-        GcStrong {
-            ptr: self.ptr.clone(),
-            counter: self.counter.clone(),
+    pub fn sweep(&mut self) {
+        // Discard all unmarked objects
+        for ptr in self.objects.iter_mut() {
+            if !ptr.is_marked() {
+                ptr.discard();
+            }
+        }
+
+        // Remove all handles to the deleted objects
+        // TODO: is there a retain-and-modify-removed elements?
+        self.objects.retain(|ptr| ptr.is_marked());
+
+        // And reset their marks
+        for ptr in self.objects.iter() {
+            ptr.unmark();
         }
     }
 }
 
-impl<T> PartialEq<GcStrong<T>> for GcStrong<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.ptr == other.ptr
-    }
-}
-
-impl<T> Eq for GcStrong<T> {}
-
-impl<T> AsRef<GcPtr<T>> for GcStrong<T> {
-    fn as_ref(&self) -> &GcPtr<T> {
-        &self.ptr
+impl<T: Traceable> Drop for GcHeap<T> {
+    // We have to implement a custom drop; not because of unsafety, but because
+    // it's our responsibility to kill everything in the heap
+    fn drop(&mut self) {
+        for ptr in self.objects.iter_mut() {
+            ptr.discard();
+        }
     }
 }
 
@@ -193,9 +150,7 @@ mod tests {
     use super::*;
 
     impl Traceable for String {
-        fn trace(&self) -> Vec<GcPtr<Self>> {
-            vec![]
-        }
+        fn trace(&self) {}
     }
 
     // Simple struct for testing references
@@ -214,10 +169,9 @@ mod tests {
     }
 
     impl Traceable for Foo {
-        fn trace(&self) -> Vec<GcPtr<Self>> {
-            match &self.next {
-                Some(s) => vec![s.clone()],
-                None => vec![],
+        fn trace(&self) {
+            if let Some(next) = &self.next {
+                next.mark();
             }
         }
     }
@@ -229,27 +183,28 @@ mod tests {
         let ptr_a = heap.insert("A".to_owned());
         let ptr_b = heap.insert("B".to_owned());
 
-        let weak_ptr_a = ptr_a.downgrade();
-        let weak_ptr_b = ptr_b.downgrade();
+        assert_eq!("A", *ptr_a.borrow());
+        assert_eq!("B", *ptr_b.borrow());
 
-        assert_eq!("A", heap.get(&weak_ptr_a).unwrap());
-        assert_eq!("B", heap.get(&weak_ptr_b).unwrap());
+        ptr_a.mark();
+        ptr_b.mark();
+        heap.sweep();
 
-        heap.collect_garbage();
+        assert_eq!("A", *ptr_a.borrow());
+        assert_eq!("B", *ptr_b.borrow());
 
-        assert_eq!("A", heap.get(&weak_ptr_a).unwrap());
-        assert_eq!("B", heap.get(&weak_ptr_b).unwrap());
+        // don't mark a
+        ptr_b.mark();
+        heap.sweep();
 
-        std::mem::drop(ptr_a);
-        heap.collect_garbage();
+        assert_eq!(None, *ptr_a.try_borrow());
+        assert_eq!("B", *ptr_b.borrow());
 
-        assert_eq!(None, heap.get(&weak_ptr_a));
-        assert_eq!("B", heap.get(&weak_ptr_b).unwrap());
+        // mark nothing
+        heap.sweep();
 
-        std::mem::drop(ptr_b);
-        heap.collect_garbage();
-
-        assert_eq!(None, heap.get(&weak_ptr_b));
+        assert_eq!(None, *ptr_a.try_borrow());
+        assert_eq!(None, *ptr_b.try_borrow());
     }
 
     #[test]
@@ -257,76 +212,71 @@ mod tests {
         let mut heap = GcHeap::<Foo>::new();
 
         let ptr_2 = heap.insert(Foo::new());
-        let ptr_1 = heap.insert(Foo::new_with_next(ptr_2.downgrade()));
+        let ptr_1 = heap.insert(Foo::new_with_next(ptr_2.clone()));
 
-        let weak_ptr_1 = ptr_1.downgrade();
-        let weak_ptr_2 = ptr_2.downgrade();
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
 
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
+        ptr_1.mark();
+        ptr_2.mark();
+        heap.sweep();
 
-        heap.collect_garbage();
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
 
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
+        // Not marking pointer #2 should be fine; #1 still maintains a reference to it
+        ptr_1.mark();
+        heap.sweep();
 
-        // Dropping the pointer to #2 should be fine; #1 still maintains a reference to it
-        std::mem::drop(ptr_2);
-        heap.collect_garbage();
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
 
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
+        // But if neither are marked, both should be collected.
+        heap.sweep();
 
-        // But after dropping #1, both should get collected
-        std::mem::drop(ptr_1);
-        heap.collect_garbage();
-
-        assert!(heap.get(&weak_ptr_1).is_none());
-        assert!(heap.get(&weak_ptr_2).is_none());
+        assert!(ptr_1.try_borrow().is_none());
+        assert!(ptr_2.try_borrow().is_none());
     }
 
     #[test]
     fn heap_test_cycles() {
         let mut heap = GcHeap::<Foo>::new();
 
-        let ptr_3 = heap.insert(Foo::new());
-        let ptr_2 = heap.insert(Foo::new_with_next(ptr_3.downgrade()));
-        let ptr_1 = heap.insert(Foo::new_with_next(ptr_2.downgrade()));
+        let mut ptr_3 = heap.insert(Foo::new());
+        let ptr_2 = heap.insert(Foo::new_with_next(ptr_3.clone()));
+        let ptr_1 = heap.insert(Foo::new_with_next(ptr_2.clone()));
 
-        // Now set #3's next to point to #1
-        heap.get_mut_unchecked(&ptr_3.downgrade()).next = Some(ptr_1.downgrade());
+        // Now set #3's next to point to #
+        ptr_3.borrow_mut().next = Some(ptr_1.clone());
 
-        let weak_ptr_1 = ptr_1.downgrade();
-        let weak_ptr_2 = ptr_2.downgrade();
-        let weak_ptr_3 = ptr_3.downgrade();
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
+        assert!(ptr_3.try_borrow().is_some());
 
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
-        assert!(heap.get(&weak_ptr_3).is_some());
-
-        heap.collect_garbage();
+        ptr_1.mark();
+        ptr_2.mark();
+        ptr_3.mark();
+        heap.sweep();
 
         // Nothing should be collected here
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
-        assert!(heap.get(&weak_ptr_3).is_some());
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
+        assert!(ptr_3.try_borrow().is_some());
 
         // Keeping #3 alive keeps everyone alive
-        std::mem::drop(ptr_1);
-        std::mem::drop(ptr_2);
-        heap.collect_garbage();
+        ptr_3.mark();
+        heap.sweep();
 
-        assert!(heap.get(&weak_ptr_1).is_some());
-        assert!(heap.get(&weak_ptr_2).is_some());
-        assert!(heap.get(&weak_ptr_3).is_some());
+        assert!(ptr_1.try_borrow().is_some());
+        assert!(ptr_2.try_borrow().is_some());
+        assert!(ptr_3.try_borrow().is_some());
 
-        // Dropping #3 leaves the reference cycle, but it should
-        // get collected anyways.
-        std::mem::drop(ptr_3);
-        heap.collect_garbage();
+        // Marking nothing means there is a reference cycle, which should
+        // be collected.
+        heap.sweep();
 
-        assert!(heap.get(&weak_ptr_1).is_none());
-        assert!(heap.get(&weak_ptr_2).is_none());
-        assert!(heap.get(&weak_ptr_3).is_none());
+        assert!(ptr_1.try_borrow().is_none());
+        assert!(ptr_2.try_borrow().is_none());
+        assert!(ptr_3.try_borrow().is_none());
     }
 }

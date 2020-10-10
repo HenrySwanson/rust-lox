@@ -69,15 +69,13 @@ impl fmt::Debug for Value {
 
 impl Traceable for HeapObject {
     // TODO return iterator instead? no heap allocation
-    fn trace(&self) -> Vec<GcPtr<HeapObject>> {
+    fn trace(&self) {
         match self {
             HeapObject::LoxClosure { .. } => {
                 // nothing to do here (yet!)
-                vec![]
             }
             HeapObject::NativeFunction { .. } => {
                 // also nothing
-                vec![]
             }
         }
     }

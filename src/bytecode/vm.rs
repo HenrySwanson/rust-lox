@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
 use super::errs::{RuntimeError, RuntimeResult};
-use super::gc::{GcHeap, GcStrong};
+use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
@@ -81,17 +81,16 @@ impl VM {
 
         // Make main() a real value and push it onto the stack
         let main_name = self.intern_string("<main>");
-        let main_chunk = Rc::new(main_chunk);
-        let main_value = self.make_heap_value(HeapObject::LoxClosure {
-            name: main_name.clone(),
+        let main_fn = self.make_heap_value(HeapObject::LoxClosure {
+            name: main_name,
             arity: 0,
-            chunk: main_chunk.clone(),
+            chunk: Rc::new(main_chunk),
         });
 
-        self.push(main_value);
+        self.push(main_fn);
 
-        // Make a frame for the invocation of main()
-        self.push_new_frame(0, main_name, main_chunk);
+        // Call main to start the program
+        self.call(self.peek(0)?, 0)?;
 
         // Print stack trace on failure
         let result = self.run();
@@ -134,7 +133,7 @@ impl VM {
                     let value = match self.frame().chunk.lookup_constant(idx) {
                         ChunkConstant::Number(n) => Value::Number(n.into()),
                         ChunkConstant::String(s) => Value::String(s),
-                        c => return Err(RuntimeError::UntranslatableConstant(c.clone())),
+                        c => return Err(RuntimeError::UntranslatableConstant(c)),
                     };
 
                     self.push(value);
@@ -267,46 +266,7 @@ impl VM {
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
-
-                    // Fetch the object in the appropriate stack slot
-                    let callable_ptr = match &self.peek(arg_count)? {
-                        Value::Obj(gc_ptr) => gc_ptr.clone(),
-                        _ => return Err(RuntimeError::NotACallable), // only callable objects are on the heap
-                    };
-
-                    // How we call it depends a lot on the object -- do a big match
-                    match self.heap.get(&callable_ptr) {
-                        HeapObject::LoxClosure { name, arity, chunk } => {
-                            // Check that the arity matches, and push the new frame
-                            if *arity != arg_count {
-                                return Err(RuntimeError::WrongArity);
-                            }
-
-                            // Cloned here to avoid borrow warning
-                            let name = name.clone();
-                            let chunk = chunk.clone();
-                            self.push_new_frame(arg_count, name, chunk);
-                        }
-                        HeapObject::NativeFunction {
-                            arity, function, ..
-                        } => {
-                            if *arity != arg_count {
-                                return Err(RuntimeError::WrongArity);
-                            }
-
-                            // Don't even do anything to the interpreter stack, just plug in the args
-                            let start_idx = self.stack.len() - arg_count;
-                            let arg_slice = &self.stack[start_idx..];
-                            let value = match function(arg_slice) {
-                                Ok(value) => value,
-                                Err(error_str) => return Err(RuntimeError::NativeError(error_str)),
-                            };
-
-                            // Strip off the args and the native fn, putting the return value on instead
-                            self.stack.truncate(self.stack.len() - arg_count - 1);
-                            self.push(value);
-                        }
-                    }
+                    self.call(self.peek(arg_count)?, arg_count)?;
                 }
                 OpCode::Return => {
                     // Rescue the return value off the stack
@@ -387,13 +347,54 @@ impl VM {
         self.string_table.get_interned(s)
     }
 
-    pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcStrong<HeapObject> {
+    pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcPtr<HeapObject> {
         self.heap.insert(obj)
     }
 
     pub fn make_heap_value(&mut self, obj: HeapObject) -> Value {
-        let gc_ptr = self.insert_into_heap(obj);
-        Value::Obj(gc_ptr.downgrade())
+        Value::Obj(self.insert_into_heap(obj))
+    }
+
+    pub fn call(&mut self, callee: Value, arg_count: usize) -> RuntimeResult<()> {
+        // Only heap objects are callable, at present
+        let heap_obj_ref = match &callee {
+            Value::Obj(gc_ptr) => gc_ptr.borrow(),
+            _ => return Err(RuntimeError::NotACallable),
+        };
+
+        // How we call it depends on the object -- do a big match
+        match &*heap_obj_ref {
+            HeapObject::LoxClosure { name, arity, chunk } => {
+                // Check that the arity matches, and push the new frame
+                if *arity != arg_count {
+                    return Err(RuntimeError::WrongArity);
+                }
+
+                self.push_new_frame(arg_count, name.clone(), chunk.clone());
+            }
+            HeapObject::NativeFunction {
+                arity, function, ..
+            } => {
+                if *arity != arg_count {
+                    return Err(RuntimeError::WrongArity);
+                }
+
+                // Don't even do anything to the interpreter stack, just plug in the args
+                let start_idx = self.stack.len() - arg_count;
+                let arg_slice = &self.stack[start_idx..];
+
+                let return_value = match function(arg_slice) {
+                    Ok(v) => v,
+                    Err(error_str) => return Err(RuntimeError::NativeError(error_str)),
+                };
+
+                // Strip off the args and the native fn, putting the return value on instead
+                self.stack.truncate(start_idx - 1);
+                self.push(return_value);
+            }
+        }
+
+        Ok(())
     }
 
     // -- other helpers --
