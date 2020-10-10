@@ -130,4 +130,11 @@ impl LiveUpvalue {
             }
         }
     }
+
+    pub fn get_open_idx(&self) -> Option<usize> {
+        match &mut *self.location.borrow_mut() {
+            UpvalueType::Open(idx) => Some(*idx),
+            UpvalueType::Closed(_) => None,
+        }
+    }
 }

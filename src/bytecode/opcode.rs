@@ -34,6 +34,7 @@ pub enum OpCode {
     MakeClosure,
     GetUpvalue,
     SetUpvalue,
+    CloseUpvalue,
     // Other
     Call,
     Return,
@@ -56,6 +57,7 @@ impl OpCode {
             OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => 2,
             OpCode::MakeClosure => return None, // variable-length
             OpCode::GetUpvalue | OpCode::SetUpvalue => 1,
+            OpCode::CloseUpvalue => 0,
             OpCode::Call => 1,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
         };

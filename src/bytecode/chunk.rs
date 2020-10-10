@@ -266,6 +266,7 @@ impl Chunk {
                 let idx = self.read_u8(offset + 1);
                 print_two!("OP_SET_UPVALUE", idx);
             }
+            OpCode::CloseUpvalue => println!("OP_CLOSE_UPVALUE"),
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),

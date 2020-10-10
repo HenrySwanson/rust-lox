@@ -22,6 +22,7 @@ struct CallFrame {
 pub struct VM {
     call_stack: Vec<CallFrame>,
     stack: Vec<Value>,
+    open_upvalues: Vec<LiveUpvalue>,
 
     heap: GcHeap<HeapObject>,
     string_table: StringInterner,
@@ -62,6 +63,8 @@ impl VM {
         let mut vm = VM {
             call_stack: vec![],
             stack: vec![],
+            open_upvalues: vec![],
+            //
             heap: GcHeap::new(),
             string_table: StringInterner::new(),
             globals: HashMap::new(),
@@ -265,7 +268,12 @@ impl VM {
                                             // Immediate means the upvalue is a local of the parent.
                                             // But we are (right now) in the frame of this closure's parent.
                                             // Remember that idx is relative to the parent's frame.
-                                            LiveUpvalue::new(self.frame().base_ptr + idx as usize)
+                                            let upvalue = LiveUpvalue::new(
+                                                self.frame().base_ptr + idx as usize,
+                                            );
+                                            // Stash a copy in our open upvalue list
+                                            self.open_upvalues.push(upvalue.clone());
+                                            upvalue
                                         }
                                         UpvalueDef::Recursive(idx) => {
                                             // Otherwise, it's one of our upvalues
@@ -307,6 +315,10 @@ impl VM {
                         Ok(()) => {}
                         Err(idx) => self.stack[idx] = value,
                     }
+                }
+                OpCode::CloseUpvalue => {
+                    self.close_upvalues(self.stack.len() - 1); // just the topmost element
+                    self.pop()?;
                 }
                 // Other
                 OpCode::Call => {
@@ -373,7 +385,10 @@ impl VM {
         let result = self.pop()?;
         let frame = self.call_stack.pop().expect("Call stack empty!");
 
-        // Clear everything above and including the most recent frame ptr
+        // Close all the upvalues above and including the most recent frame ptr
+        self.close_upvalues(frame.base_ptr);
+
+        // Now we can clear the stack
         self.stack.truncate(frame.base_ptr);
 
         Ok(result)
@@ -393,6 +408,22 @@ impl VM {
             .get(stack_size - 1 - depth)
             .cloned()
             .ok_or(RuntimeError::InvalidStackIndex)
+    }
+
+    fn close_upvalues(&mut self, stack_idx: usize) {
+        // Closes all upvalues corresponding to stack slots at or above the given index
+        for upvalue in self.open_upvalues.iter() {
+            match upvalue.get_open_idx() {
+                Some(slot) if slot >= stack_idx => {
+                    let value = self.stack[slot].clone();
+                    upvalue.close(value);
+                }
+                _ => {}
+            }
+        }
+
+        // Remove all closed upvalues
+        self.open_upvalues.retain(|u| u.get_open_idx().is_some());
     }
 
     pub fn intern_string(&mut self, s: &str) -> InternedString {

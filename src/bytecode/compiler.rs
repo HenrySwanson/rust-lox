@@ -20,6 +20,7 @@ struct Local {
     name: String,
     scope_depth: u32,
     initialized: bool,
+    captured: bool,
 }
 
 // TODO i feel like this shouldn't be exposed, but it's part of the chunk
@@ -57,6 +58,7 @@ impl Context {
             name: reserved_id.to_owned(),
             scope_depth: 0,
             initialized: false, // doesn't matter
+            captured: false,
         };
         Context {
             chunk: Chunk::new(),
@@ -97,6 +99,7 @@ impl Context {
             name: name.to_owned(),
             scope_depth: self.scope_depth,
             initialized: false,
+            captured: false,
         });
 
         Ok(())
@@ -565,12 +568,17 @@ impl<'strtable> Compiler<'strtable> {
         // Go through the tail of the locals list, and pop off things until
         // we're done with that scope.
         while let Some(local) = state.locals.last() {
-            if local.scope_depth > state.scope_depth {
-                state.chunk.write_op(OpCode::Pop, 0); // TODO line no
-                state.locals.pop();
-            } else {
+            if local.scope_depth <= state.scope_depth {
                 break;
             }
+
+            if local.captured {
+                state.chunk.write_op(OpCode::CloseUpvalue, 0);
+            } else {
+                state.chunk.write_op(OpCode::Pop, 0); // TODO line no
+            }
+
+            state.locals.pop();
         }
     }
 
@@ -597,7 +605,10 @@ impl<'strtable> Compiler<'strtable> {
             return Ok(VariableLocator::Local(local_idx));
         }
 
-        // Start inserting upvalues into each of the contexts in between.
+        // Otherwise, we mark it as captured, and start inserting upvalues into each
+        // of the contexts in between.
+        self.context_stack[root_idx].locals[local_idx as usize].captured = true;
+
         // The first upvalue we mark is an Immediate, but after that, it's all Recursive
         let mut upvalue_idx =
             self.context_stack[root_idx + 1].add_upvalue(Upvalue::Immediate(local_idx))?;
