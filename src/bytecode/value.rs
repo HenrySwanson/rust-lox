@@ -85,8 +85,19 @@ impl fmt::Debug for Value {
             Value::Boolean(b) => b.fmt(f),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => s.fmt(f),
-            // TODO: make this more informative
-            Value::Obj(handle) => write!(f, "(heap) {:?}", handle),
+            Value::Obj(handle) => match &*handle.try_borrow() {
+                Some(obj) => obj.fmt(f),
+                None => write!(f, "<garbage>"),
+            },
+        }
+    }
+}
+
+impl fmt::Debug for HeapObject {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HeapObject::LoxClosure { name, .. } => write!(f, "<fn {}>", name),
+            HeapObject::NativeFunction { name, .. } => write!(f, "<native fn {}>", name),
         }
     }
 }
