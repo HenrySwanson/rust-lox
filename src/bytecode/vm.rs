@@ -253,47 +253,41 @@ impl VM {
                 OpCode::MakeClosure => {
                     // Load a constant; we can only proceed if it's a FnTemplate
                     let idx = self.frame_mut().read_u8();
-                    let closure_obj = match self.frame().chunk.lookup_constant(idx) {
-                        ChunkConstant::FnTemplate {
-                            name,
-                            arity,
-                            chunk,
-                            upvalue_count,
-                        } => {
-                            // Read the upvalues
-                            let mut upvalues = vec![];
-                            for i in 0..upvalue_count {
-                                let upvalue = match self.frame_mut().try_read_upvalue() {
-                                    Ok(u) => match u {
-                                        UpvalueDef::Immediate(idx) => {
-                                            // Immediate means the upvalue is a local of the parent.
-                                            // But we are (right now) in the frame of this closure's parent.
-                                            // Remember that idx is relative to the parent's frame.
-                                            let upvalue = LiveUpvalue::new(
-                                                self.frame().base_ptr + idx as usize,
-                                            );
-                                            // Stash a copy in our open upvalue list
-                                            self.open_upvalues.push(upvalue.clone());
-                                            upvalue
-                                        }
-                                        UpvalueDef::Recursive(idx) => {
-                                            // Otherwise, it's one of our upvalues
-                                            self.frame().upvalues[idx as usize].clone()
-                                        }
-                                    },
-                                    Err(_) => return Err(RuntimeError::BadUpvalue),
-                                };
-                                upvalues.push(upvalue);
-                            }
-
-                            HeapObject::LoxClosure {
-                                name,
-                                arity,
-                                chunk: chunk.clone(),
-                                upvalues: Rc::new(upvalues),
-                            }
-                        }
+                    let (name, arity, chunk, upvalue_count) = match self.frame().chunk.lookup_constant(idx) {
+                        ChunkConstant::FnTemplate { name, arity, chunk, upvalue_count } => (name, arity, chunk, upvalue_count),
                         _ => return Err(RuntimeError::NotACallable),
+                    };
+
+                    // Read the upvalues
+                    let mut upvalues = Vec::with_capacity(upvalue_count);
+                    for _ in 0..upvalue_count {
+                        let upvalue = match self
+                            .frame_mut()
+                            .try_read_upvalue().map_err(|_| RuntimeError::BadUpvalue)?
+                        {
+                            UpvalueDef::Immediate(idx) => {
+                                // Immediate means the upvalue is a local of the parent.
+                                // But we are (right now) in the frame of this closure's parent.
+                                // Remember that idx is relative to the parent's frame.
+                                let upvalue =
+                                    LiveUpvalue::new(self.frame().base_ptr + idx as usize);
+                                // Stash a copy in our open upvalue list
+                                self.open_upvalues.push(upvalue.clone());
+                                upvalue
+                            }
+                            UpvalueDef::Recursive(idx) => {
+                                // Otherwise, it's one of our upvalues
+                                self.frame().upvalues[idx as usize].clone()
+                            }
+                        };
+                        upvalues.push(upvalue);
+                    }
+
+                    let closure_obj = HeapObject::LoxClosure {
+                        name,
+                        arity,
+                        chunk: chunk.clone(),
+                        upvalues: Rc::new(upvalues),
                     };
 
                     let closure_value = self.make_heap_value(closure_obj);
@@ -330,10 +324,10 @@ impl VM {
                     self.push(class_value);
                 }
                 OpCode::GetProperty => {
-                    let gc_ptr = match self.peek(0)? {
-                        Value::Obj(gc_ptr) => gc_ptr,
-                        _ => return Err(RuntimeError::NotAnInstance),
-                    };
+                    let gc_ptr = self
+                        .peek(0)?
+                        .try_into_heap_object()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     match &*gc_ptr.borrow() {
                         HeapObject::LoxInstance { fields, .. } => {
@@ -354,10 +348,10 @@ impl VM {
                 OpCode::SetProperty => {
                     let value = self.peek(0)?;
 
-                    let mut gc_ptr = match self.peek(1)? {
-                        Value::Obj(gc_ptr) => gc_ptr,
-                        _ => return Err(RuntimeError::NotAnInstance),
-                    };
+                    let mut gc_ptr = self
+                        .peek(1)?
+                        .try_into_heap_object()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     match &mut *gc_ptr.borrow_mut() {
                         HeapObject::LoxInstance { fields, .. } => {
@@ -494,10 +488,9 @@ impl VM {
 
     pub fn call(&mut self, callee: Value, arg_count: usize) -> RuntimeResult<()> {
         // Only heap objects are callable, at present
-        let gc_ptr = match &callee {
-            Value::Obj(gc_ptr) => gc_ptr,
-            _ => return Err(RuntimeError::NotACallable),
-        };
+        let gc_ptr = callee
+            .try_into_heap_object()
+            .ok_or(RuntimeError::NotAnInstance)?;
 
         // How we call it depends on the object -- do a big match
         match &*gc_ptr.borrow() {

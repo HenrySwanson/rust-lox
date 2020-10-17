@@ -68,6 +68,13 @@ impl Value {
             Value::Obj(ptr) => ptr.mark(),
         }
     }
+
+    pub fn try_into_heap_object(self) -> Option<GcPtr<HeapObject>> {
+        match self {
+            Value::Obj(gc_ptr) => Some(gc_ptr),
+            _ => None,
+        }
+    }
 }
 
 impl PartialEq<Value> for Value {

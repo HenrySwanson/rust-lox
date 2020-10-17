@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
-use super::chunk::{Chunk, ChunkConstant};
+use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
 use super::errs::{CompilerError, CompilerResult};
 use super::opcode::OpCode;
 use super::string_interning::StringInterner;
@@ -188,7 +188,17 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_while_statement(condition, body.as_ref())?;
             }
             ast::StmtKind::FunctionDecl(fn_decl) => {
+                // Functions are allowed to refer to themselves; create a local with the
+                // appropriate name before actually compiling the function.
+                self.declare_variable(&fn_decl.name)?;
+                if self.get_ctx().scope_depth != 0 {
+                    self.get_ctx_mut().mark_last_local_initialized();
+                }
+
                 self.compile_function_decl(fn_decl, line_no)?;
+
+                // Lastly, define the function variable
+                self.define_variable(&fn_decl.name, line_no)?;
             }
             ast::StmtKind::Return(expr) => {
                 match expr {
@@ -203,8 +213,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.declare_variable(name)?;
 
                 // Store the name as a constant
-                let value = ChunkConstant::String(self.string_table.get_interned(name));
-                let idx = self.current_chunk().add_constant(value);
+                let idx = self.add_string_constant(name);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::MakeClass, idx, line_no);
 
@@ -270,13 +279,6 @@ impl<'strtable> Compiler<'strtable> {
         fn_decl: &ast::FunctionDecl,
         line_no: usize,
     ) -> CompilerResult<()> {
-        // Functions are allowed to refer to themselves; create a local with the
-        // appropriate name before actually compiling the function.
-        self.declare_variable(&fn_decl.name)?;
-        if self.get_ctx().scope_depth != 0 {
-            self.get_ctx_mut().mark_last_local_initialized();
-        }
-
         // Create the new compiler context
         self.context_stack.push(Context::new(""));
         self.begin_scope();
@@ -310,7 +312,7 @@ impl<'strtable> Compiler<'strtable> {
 
         // Unlike regular constants, we load this with MAKE_CLOSURE
         // TODO should i have a separate list for these in the chunk?
-        let idx = self.current_chunk().add_constant(fn_template);
+        let idx = self.add_constant(fn_template);
         self.current_chunk()
             .write_op_with_u8(OpCode::MakeClosure, idx, line_no);
 
@@ -324,9 +326,6 @@ impl<'strtable> Compiler<'strtable> {
             self.current_chunk().write_u8(bytes[1], line_no);
         }
 
-        // Finally, define the function variable
-        self.define_variable(&fn_decl.name, line_no)?;
-
         Ok(())
     }
 
@@ -337,8 +336,8 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no),
             ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
             ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr)?,
-            ast::ExprKind::Variable(var) => self.get_variable(var, line_no)?,
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, line_no)?,
+            ast::ExprKind::Variable(var) => self.get_variable(&var.name, line_no)?,
+            ast::ExprKind::Assignment(var, expr) => self.set_variable(&var.name, expr, line_no)?,
             ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => self.compile_and(lhs, rhs)?,
             ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => self.compile_or(lhs, rhs)?,
             ast::ExprKind::Call(callee, args) => {
@@ -354,15 +353,13 @@ impl<'strtable> Compiler<'strtable> {
                 );
             }
             ast::ExprKind::Get(expr, name) => {
-                let name = ChunkConstant::String(self.string_table.get_interned(name));
-                let idx = self.current_chunk().add_constant(name);
+                let idx = self.add_string_constant(name);
                 self.compile_expression(expr)?;
                 self.current_chunk()
                     .write_op_with_u8(OpCode::GetProperty, idx, line_no);
             }
             ast::ExprKind::Set(expr, name, value_expr) => {
-                let name = ChunkConstant::String(self.string_table.get_interned(name));
-                let idx = self.current_chunk().add_constant(name);
+                let idx = self.add_string_constant(name);
                 self.compile_expression(expr)?;
                 self.compile_expression(value_expr)?;
                 self.current_chunk()
@@ -378,7 +375,7 @@ impl<'strtable> Compiler<'strtable> {
         match literal {
             ast::Literal::Number(n) => {
                 let value = ChunkConstant::Number(*n);
-                let idx = self.current_chunk().add_constant(value);
+                let idx = self.add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::Constant, idx, line_no);
             }
@@ -388,7 +385,7 @@ impl<'strtable> Compiler<'strtable> {
             }
             ast::Literal::Str(s) => {
                 let value = ChunkConstant::String(self.string_table.get_interned(s));
-                let idx = self.current_chunk().add_constant(value);
+                let idx = self.add_constant(value);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::Constant, idx, line_no);
             }
@@ -498,8 +495,7 @@ impl<'strtable> Compiler<'strtable> {
         if self.get_ctx().scope_depth == 0 {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
-            let value = ChunkConstant::String(self.string_table.get_interned(name));
-            let global_idx = self.current_chunk().add_constant(value);
+            let global_idx = self.add_string_constant(name);
             self.current_chunk()
                 .write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
         } else {
@@ -509,12 +505,11 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn get_variable(&mut self, var: &ast::VariableRef, line_no: usize) -> CompilerResult<()> {
-        match self.resolve_variable(&var.name)? {
+    fn get_variable(&mut self, var_name: &str, line_no: usize) -> CompilerResult<()> {
+        match self.resolve_variable(var_name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a GetGlobal instruction.
-                let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
-                let global_idx = self.current_chunk().add_constant(value);
+                let global_idx = self.add_string_constant(var_name);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
             }
@@ -533,7 +528,7 @@ impl<'strtable> Compiler<'strtable> {
 
     fn set_variable(
         &mut self,
-        var: &ast::VariableRef,
+        var_name: &str,
         expr: &ast::Expr,
         line_no: usize,
     ) -> CompilerResult<()> {
@@ -541,11 +536,10 @@ impl<'strtable> Compiler<'strtable> {
         // expression on the stack.
         self.compile_expression(expr)?;
 
-        match self.resolve_variable(&var.name)? {
+        match self.resolve_variable(var_name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a SetGlobal instruction.
-                let value = ChunkConstant::String(self.string_table.get_interned(&var.name));
-                let global_idx = self.current_chunk().add_constant(value);
+                let global_idx = self.add_string_constant(var_name);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
             }
@@ -580,6 +574,15 @@ impl<'strtable> Compiler<'strtable> {
 
     fn current_chunk(&mut self) -> &mut Chunk {
         &mut self.get_ctx_mut().chunk
+    }
+
+    fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {
+        self.current_chunk().add_constant(constant)
+    }
+
+    fn add_string_constant(&mut self, string: &str) -> ConstantIdx {
+        let constant = ChunkConstant::String(self.string_table.get_interned(string));
+        self.add_constant(constant)
     }
 
     fn begin_scope(&mut self) {

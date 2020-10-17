@@ -175,15 +175,19 @@ impl Chunk {
             };
         }
 
+        macro_rules! print_with_constant {
+            ($op:expr) => {{
+                let idx = self.read_u8(offset + 1);
+                let constant = self.lookup_constant(idx);
+                print_three!($op, idx, constant);
+            };};
+        }
+
         let mut variable_args_size: Option<usize> = None;
 
         match instruction {
             // Constants
-            OpCode::Constant => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_CONSTANT", idx, constant);
-            }
+            OpCode::Constant => print_with_constant!("OP_CONSTANT"),
             OpCode::True => println!("OP_TRUE"),
             OpCode::False => println!("OP_FALSE"),
             OpCode::Nil => println!("OP_NIL"),
@@ -200,42 +204,15 @@ impl Chunk {
             OpCode::GreaterThan => println!("OP_GREATER"),
             OpCode::LessThan => println!("OP_LESS"),
             // Variables
-            OpCode::DefineGlobal => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_DEFINE_GLOBAL", idx, constant);
-            }
-            OpCode::GetGlobal => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_GET_GLOBAL", idx, constant);
-            }
-            OpCode::SetGlobal => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_SET_GLOBAL", idx, constant);
-            }
-            OpCode::GetLocal => {
-                let idx = self.read_u8(offset + 1);
-                print_two!("OP_GET_LOCAL", idx);
-            }
-            OpCode::SetLocal => {
-                let idx = self.read_u8(offset + 1);
-                print_two!("OP_SET_LOCAL", idx);
-            }
+            OpCode::DefineGlobal => print_with_constant!("OP_DEFINE_GLOBAL"),
+            OpCode::GetGlobal => print_with_constant!("OP_GET_GLOBAL"),
+            OpCode::SetGlobal => print_with_constant!("OP_SET_GLOBAL"),
+            OpCode::GetLocal => print_two!("OP_GET_LOCAL", self.read_u8(offset + 1)),
+            OpCode::SetLocal => print_two!("OP_SET_LOCAL", self.read_u8(offset + 1)),
             // Jumps
-            OpCode::Jump => {
-                let distance = self.read_u16(offset + 1);
-                print_two!("OP_JUMP", distance);
-            }
-            OpCode::JumpIfFalse => {
-                let distance = self.read_u16(offset + 1);
-                print_two!("OP_JUMP_IF_FALSE", distance);
-            }
-            OpCode::Loop => {
-                let distance = self.read_u16(offset + 1);
-                print_two!("OP_LOOP", distance);
-            }
+            OpCode::Jump => print_two!("OP_JUMP", self.read_u16(offset + 1)),
+            OpCode::JumpIfFalse => print_two!("OP_JUMP_IF_FALSE", self.read_u16(offset + 1)),
+            OpCode::Loop => print_two!("OP_LOOP", self.read_u16(offset + 1)),
             // Closures and Upvalues
             OpCode::MakeClosure => {
                 let idx = self.read_u8(offset + 1);
@@ -258,31 +235,13 @@ impl Chunk {
                 }
                 variable_args_size = Some(1 + 2 * upvalue_count);
             }
-            OpCode::GetUpvalue => {
-                let idx = self.read_u8(offset + 1);
-                print_two!("OP_GET_UPVALUE", idx);
-            }
-            OpCode::SetUpvalue => {
-                let idx = self.read_u8(offset + 1);
-                print_two!("OP_SET_UPVALUE", idx);
-            }
+            OpCode::GetUpvalue => print_two!("OP_GET_UPVALUE", self.read_u8(offset + 1)),
+            OpCode::SetUpvalue => print_two!("OP_SET_UPVALUE", self.read_u8(offset + 1)),
             OpCode::CloseUpvalue => println!("OP_CLOSE_UPVALUE"),
             // Classes
-            OpCode::MakeClass => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_MAKE_CLASS", idx, constant);
-            }
-            OpCode::GetProperty => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_GET_PROPERTY", idx, constant);
-            }
-            OpCode::SetProperty => {
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!("OP_SET_PROPERTY", idx, constant);
-            }
+            OpCode::MakeClass => print_with_constant!("OP_MAKE_CLASS"),
+            OpCode::GetProperty => print_with_constant!("OP_GET_PROPERTY"),
+            OpCode::SetProperty => print_with_constant!("OP_SET_PROPERTY"),
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),
