@@ -199,7 +199,17 @@ impl<'strtable> Compiler<'strtable> {
                 }
                 self.current_chunk().write_op(OpCode::Return, line_no);
             }
-            _ => panic!("Don't know how to compile that statement yet!"),
+            ast::StmtKind::ClassDecl(name, _superclass, _methods) => {
+                self.declare_variable(name)?;
+
+                // Store the name as a constant
+                let value = ChunkConstant::String(self.string_table.get_interned(name));
+                let idx = self.current_chunk().add_constant(value);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::MakeClass, idx, line_no);
+
+                self.define_variable(name, line_no)?;
+            }
         };
 
         Ok(())
@@ -342,6 +352,21 @@ impl<'strtable> Compiler<'strtable> {
                     u8::try_from(args.len()).expect("Too many arguments in AST"),
                     line_no,
                 );
+            }
+            ast::ExprKind::Get(expr, name) => {
+                let name = ChunkConstant::String(self.string_table.get_interned(name));
+                let idx = self.current_chunk().add_constant(name);
+                self.compile_expression(expr)?;
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::GetProperty, idx, line_no);
+            }
+            ast::ExprKind::Set(expr, name, value_expr) => {
+                let name = ChunkConstant::String(self.string_table.get_interned(name));
+                let idx = self.current_chunk().add_constant(name);
+                self.compile_expression(expr)?;
+                self.compile_expression(value_expr)?;
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::SetProperty, idx, line_no);
             }
             _ => panic!("Don't know how to compile that expression yet!"),
         };

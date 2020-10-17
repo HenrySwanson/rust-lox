@@ -35,6 +35,10 @@ pub enum OpCode {
     GetUpvalue,
     SetUpvalue,
     CloseUpvalue,
+    // Classes
+    MakeClass,
+    GetProperty,
+    SetProperty,
     // Other
     Call,
     Return,
@@ -58,6 +62,8 @@ impl OpCode {
             OpCode::MakeClosure => return None, // variable-length
             OpCode::GetUpvalue | OpCode::SetUpvalue => 1,
             OpCode::CloseUpvalue => 0,
+            OpCode::MakeClass => 1,
+            OpCode::GetProperty | OpCode::SetProperty => 1,
             OpCode::Call => 1,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
         };

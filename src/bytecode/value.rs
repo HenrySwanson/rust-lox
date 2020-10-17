@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -29,6 +30,13 @@ pub enum HeapObject {
         name: InternedString,
         arity: usize,
         function: NativeFnType,
+    },
+    LoxClass {
+        name: InternedString,
+    },
+    LoxInstance {
+        class: GcPtr<HeapObject>, // TODO is it time for multiple heaps?
+        fields: HashMap<InternedString, Value>,
     },
 }
 
@@ -98,6 +106,8 @@ impl fmt::Debug for HeapObject {
         match self {
             HeapObject::LoxClosure { name, .. } => write!(f, "<fn {}>", name),
             HeapObject::NativeFunction { name, .. } => write!(f, "<native fn {}>", name),
+            HeapObject::LoxClass { name, .. } => write!(f, "{}", name),
+            HeapObject::LoxInstance { class, .. } => write!(f, "{:?} instance", class.borrow()),
         }
     }
 }
@@ -113,6 +123,17 @@ impl Traceable for HeapObject {
             }
             HeapObject::NativeFunction { .. } => {
                 // nothing to do here
+            }
+            HeapObject::LoxClass { .. } => {
+                // A class only has a name; nothing to do here
+                // TODO revisit this
+            }
+            HeapObject::LoxInstance { class, fields, .. } => {
+                // An instance has many things it can access
+                class.mark();
+                for f in fields.values() {
+                    f.mark_internals();
+                }
             }
         }
     }

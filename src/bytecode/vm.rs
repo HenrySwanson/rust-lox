@@ -321,6 +321,59 @@ impl VM {
                     self.close_upvalues(self.stack.len() - 1); // just the topmost element
                     self.pop()?;
                 }
+                // Classes
+                OpCode::MakeClass => {
+                    let idx = self.frame_mut().read_u8();
+                    let name = self.lookup_string(idx);
+                    let class_obj = HeapObject::LoxClass { name };
+                    let class_value = self.make_heap_value(class_obj);
+                    self.push(class_value);
+                }
+                OpCode::GetProperty => {
+                    let gc_ptr = match self.peek(0)? {
+                        Value::Obj(gc_ptr) => gc_ptr,
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+
+                    match &*gc_ptr.borrow() {
+                        HeapObject::LoxInstance { fields, .. } => {
+                            let idx = self.frame_mut().read_u8();
+                            let name = self.lookup_string(idx);
+                            let value = match fields.get(&name) {
+                                Some(value) => value,
+                                None => return Err(RuntimeError::UndefinedProperty),
+                            };
+
+                            // Pop the instance, push the property
+                            self.pop()?;
+                            self.push(value.clone());
+                        }
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+                }
+                OpCode::SetProperty => {
+                    let value = self.peek(0)?;
+
+                    let mut gc_ptr = match self.peek(1)? {
+                        Value::Obj(gc_ptr) => gc_ptr,
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+
+                    match &mut *gc_ptr.borrow_mut() {
+                        HeapObject::LoxInstance { fields, .. } => {
+                            let idx = self.frame_mut().read_u8();
+                            let name = self.lookup_string(idx);
+
+                            fields.insert(name, value.clone());
+
+                            // Remove the instance from the stack, but leave the value
+                            self.pop()?;
+                            self.pop()?;
+                            self.push(value.clone());
+                        }
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+                }
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
@@ -441,13 +494,13 @@ impl VM {
 
     pub fn call(&mut self, callee: Value, arg_count: usize) -> RuntimeResult<()> {
         // Only heap objects are callable, at present
-        let heap_obj_ref = match &callee {
-            Value::Obj(gc_ptr) => gc_ptr.borrow(),
+        let gc_ptr = match &callee {
+            Value::Obj(gc_ptr) => gc_ptr,
             _ => return Err(RuntimeError::NotACallable),
         };
 
         // How we call it depends on the object -- do a big match
-        match &*heap_obj_ref {
+        match &*gc_ptr.borrow() {
             HeapObject::LoxClosure {
                 name,
                 arity,
@@ -481,6 +534,18 @@ impl VM {
                 self.stack.truncate(start_idx - 1);
                 self.push(return_value);
             }
+            HeapObject::LoxClass { .. } => {
+                // Ignore arguments for now
+                let instance_obj = HeapObject::LoxInstance {
+                    class: gc_ptr.clone(),
+                    fields: HashMap::new(),
+                };
+                let instance = self.make_heap_value(instance_obj);
+
+                self.stack.truncate(self.stack.len() - arg_count - 1);
+                self.push(instance);
+            }
+            HeapObject::LoxInstance { .. } => return Err(RuntimeError::NotACallable),
         }
 
         Ok(())

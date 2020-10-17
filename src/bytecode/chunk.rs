@@ -267,6 +267,22 @@ impl Chunk {
                 print_two!("OP_SET_UPVALUE", idx);
             }
             OpCode::CloseUpvalue => println!("OP_CLOSE_UPVALUE"),
+            // Classes
+            OpCode::MakeClass => {
+                let idx = self.read_u8(offset + 1);
+                let constant = self.lookup_constant(idx);
+                print_three!("OP_MAKE_CLASS", idx, constant);
+            }
+            OpCode::GetProperty => {
+                let idx = self.read_u8(offset + 1);
+                let constant = self.lookup_constant(idx);
+                print_three!("OP_GET_PROPERTY", idx, constant);
+            }
+            OpCode::SetProperty => {
+                let idx = self.read_u8(offset + 1);
+                let constant = self.lookup_constant(idx);
+                print_three!("OP_SET_PROPERTY", idx, constant);
+            }
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),

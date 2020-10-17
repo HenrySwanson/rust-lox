@@ -22,6 +22,8 @@ pub enum RuntimeError {
     NativeError(String),
     UntranslatableConstant(ChunkConstant),
     BadUpvalue,
+    NotAnInstance,
+    UndefinedProperty,
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;
