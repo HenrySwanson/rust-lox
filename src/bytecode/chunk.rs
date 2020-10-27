@@ -242,6 +242,7 @@ impl Chunk {
             OpCode::MakeClass => print_with_constant!("OP_MAKE_CLASS"),
             OpCode::GetProperty => print_with_constant!("OP_GET_PROPERTY"),
             OpCode::SetProperty => print_with_constant!("OP_SET_PROPERTY"),
+            OpCode::MakeMethod => print_with_constant!("OP_MAKE_METHOD"),
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),

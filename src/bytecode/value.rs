@@ -33,10 +33,15 @@ pub enum HeapObject {
     },
     LoxClass {
         name: InternedString,
+        methods: HashMap<InternedString, GcPtr<HeapObject>>,
     },
     LoxInstance {
         class: GcPtr<HeapObject>, // TODO is it time for multiple heaps?
         fields: HashMap<InternedString, Value>,
+    },
+    LoxBoundMethod {
+        receiver: GcPtr<HeapObject>,
+        closure: GcPtr<HeapObject>,
     },
 }
 
@@ -115,6 +120,7 @@ impl fmt::Debug for HeapObject {
             HeapObject::NativeFunction { name, .. } => write!(f, "<native fn {}>", name),
             HeapObject::LoxClass { name, .. } => write!(f, "{}", name),
             HeapObject::LoxInstance { class, .. } => write!(f, "{:?} instance", class.borrow()),
+            HeapObject::LoxBoundMethod { closure, .. } => closure.borrow().fmt(f),
         }
     }
 }
@@ -131,9 +137,11 @@ impl Traceable for HeapObject {
             HeapObject::NativeFunction { .. } => {
                 // nothing to do here
             }
-            HeapObject::LoxClass { .. } => {
+            HeapObject::LoxClass { methods, .. } => {
                 // A class only has a name; nothing to do here
-                // TODO revisit this
+                for m in methods.values() {
+                    m.mark();
+                }
             }
             HeapObject::LoxInstance { class, fields, .. } => {
                 // An instance has many things it can access
@@ -141,6 +149,10 @@ impl Traceable for HeapObject {
                 for f in fields.values() {
                     f.mark_internals();
                 }
+            }
+            HeapObject::LoxBoundMethod { receiver, closure } => {
+                receiver.mark();
+                closure.mark();
             }
         }
     }

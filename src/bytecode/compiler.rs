@@ -16,6 +16,8 @@ type LocalIdx = u8;
 const MAX_UPVALUES: usize = 256;
 type UpvalueIdx = u8;
 
+const THIS_STR: &str = "this";
+
 struct Local {
     name: String,
     scope_depth: u32,
@@ -39,11 +41,19 @@ enum VariableLocator {
     Global,
 }
 
+#[derive(PartialEq, Eq)]
+enum FunctionType {
+    Function,
+    Method,
+    Initializer,
+}
+
 struct Context {
     chunk: Chunk,
     locals: Vec<Local>,
     upvalues: Vec<Upvalue>,
     scope_depth: u32,
+    is_initializer: bool,
 }
 
 pub struct Compiler<'strtable> {
@@ -57,7 +67,7 @@ impl Context {
         let reserved_local = Local {
             name: reserved_id.to_owned(),
             scope_depth: 0,
-            initialized: false, // doesn't matter
+            initialized: true,
             captured: false,
         };
         Context {
@@ -65,6 +75,7 @@ impl Context {
             locals: vec![reserved_local],
             upvalues: vec![],
             scope_depth: 0,
+            is_initializer: false,
         }
     }
 
@@ -195,7 +206,7 @@ impl<'strtable> Compiler<'strtable> {
                     self.get_ctx_mut().mark_last_local_initialized();
                 }
 
-                self.compile_function_decl(fn_decl, line_no)?;
+                self.compile_function_decl(fn_decl, line_no, FunctionType::Function)?;
 
                 // Lastly, define the function variable
                 self.define_variable(&fn_decl.name, line_no)?;
@@ -205,19 +216,43 @@ impl<'strtable> Compiler<'strtable> {
                     Some(expr) => {
                         self.compile_expression(expr)?;
                     }
-                    None => self.current_chunk().write_op(OpCode::Nil, line_no),
+                    None => {
+                        self.emit_implicit_return_arg(line_no);
+                    }
                 }
                 self.current_chunk().write_op(OpCode::Return, line_no);
             }
-            ast::StmtKind::ClassDecl(name, _superclass, _methods) => {
+            ast::StmtKind::ClassDecl(name, _superclass, methods) => {
                 self.declare_variable(name)?;
 
                 // Store the name as a constant
                 let idx = self.add_string_constant(name);
                 self.current_chunk()
                     .write_op_with_u8(OpCode::MakeClass, idx, line_no);
-
                 self.define_variable(name, line_no)?;
+
+                // Load the class onto the stack
+                self.get_variable(name, line_no)?;
+
+                // Deal with the methods
+                for method in methods.iter() {
+                    let fn_type = if method.name == "init" {
+                        FunctionType::Initializer
+                    } else {
+                        FunctionType::Method
+                    };
+                    self.compile_function_decl(&method, method.body.span.lo.line_no, fn_type)?;
+
+                    let idx = self.add_string_constant(&method.name);
+                    self.current_chunk().write_op_with_u8(
+                        OpCode::MakeMethod,
+                        idx,
+                        method.body.span.hi.line_no,
+                    );
+                }
+
+                // Pop the class off the stack
+                self.current_chunk().write_op(OpCode::Pop, line_no);
             }
         };
 
@@ -278,9 +313,18 @@ impl<'strtable> Compiler<'strtable> {
         &mut self,
         fn_decl: &ast::FunctionDecl,
         line_no: usize,
+        fn_type: FunctionType,
     ) -> CompilerResult<()> {
         // Create the new compiler context
-        self.context_stack.push(Context::new(""));
+        let mut new_context = Context::new(match fn_type {
+            FunctionType::Function => "",
+            FunctionType::Method | FunctionType::Initializer => "this",
+        });
+        if fn_type == FunctionType::Initializer {
+            new_context.is_initializer = true;
+        }
+
+        self.context_stack.push(new_context);
         self.begin_scope();
 
         // Declare+define the arguments
@@ -292,10 +336,9 @@ impl<'strtable> Compiler<'strtable> {
 
         // Compile the function body, and add an implicit return
         self.compile_statement(fn_decl.body.as_ref())?;
-        self.current_chunk()
-            .write_op(OpCode::Nil, fn_decl.body.span.hi.line_no);
-        self.current_chunk()
-            .write_op(OpCode::Return, fn_decl.body.span.hi.line_no);
+        let last_line = fn_decl.body.span.hi.line_no;
+        self.emit_implicit_return_arg(last_line);
+        self.current_chunk().write_op(OpCode::Return, last_line);
 
         // no need to end scope, we're just killing this compiler context completely
         let ctx = self.context_stack.pop().expect("Context stack empty!");
@@ -364,6 +407,9 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_expression(value_expr)?;
                 self.current_chunk()
                     .write_op_with_u8(OpCode::SetProperty, idx, line_no);
+            }
+            ast::ExprKind::This(_) => {
+                self.get_variable(THIS_STR, line_no)?;
             }
             _ => panic!("Don't know how to compile that expression yet!"),
         };
@@ -647,6 +693,16 @@ impl<'strtable> Compiler<'strtable> {
         // If we made it here, it means this variable is local to some enclosing scope,
         // so it's located in our upvalue array.
         Ok(VariableLocator::Upvalue(upvalue_idx))
+    }
+
+    fn emit_implicit_return_arg(&mut self, line_no: usize) {
+        // this is pulled out into its own method so it can be called in two spots
+        if self.get_ctx().is_initializer {
+            self.current_chunk()
+                .write_op_with_u8(OpCode::GetLocal, 0, line_no);
+        } else {
+            self.current_chunk().write_op(OpCode::Nil, line_no);
+        }
     }
 
     #[allow(unused_variables)]
