@@ -8,7 +8,10 @@ use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{HeapObject, LiveUpvalue, Value};
+use super::value::{
+    LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, NativeFunction,
+    NativeFunctionData, Value,
+};
 
 struct CallFrame {
     ip: usize,
@@ -19,14 +22,20 @@ struct CallFrame {
 }
 
 pub struct VM {
+    // Invocation data
     call_stack: Vec<CallFrame>,
     stack: Vec<Value>,
     open_upvalues: Vec<LiveUpvalue>,
 
-    heap: GcHeap<HeapObject>,
+    // Persistent data
     string_table: StringInterner,
     globals: HashMap<InternedString, Value>,
+    closure_heap: GcHeap<LoxClosure>,
+    class_heap: GcHeap<LoxClass>,
+    instance_heap: GcHeap<LoxInstance>,
+    bound_method_heap: GcHeap<LoxBoundMethod>,
 
+    // Constant
     init_string: InternedString,
 }
 
@@ -69,9 +78,12 @@ impl VM {
             stack: vec![],
             open_upvalues: vec![],
             //
-            heap: GcHeap::new(),
             string_table,
             globals: HashMap::new(),
+            closure_heap: GcHeap::new(),
+            class_heap: GcHeap::new(),
+            instance_heap: GcHeap::new(),
+            bound_method_heap: GcHeap::new(),
             //
             init_string,
         };
@@ -79,13 +91,14 @@ impl VM {
         // Define natives
         for (name, arity, function) in native::get_natives().iter().copied() {
             let name = vm.intern_string(name);
-            let native_fn = vm.make_heap_value(HeapObject::NativeFunction {
+            let native_fn_data = NativeFunctionData {
                 name: name.clone(),
                 arity,
                 function,
-            });
+            };
+            let native_fn = NativeFunction(Rc::new(native_fn_data));
 
-            vm.globals.insert(name, native_fn);
+            vm.globals.insert(name, Value::NativeFunction(native_fn));
         }
 
         vm
@@ -96,23 +109,23 @@ impl VM {
     }
 
     pub fn interpret(&mut self, main_chunk: Chunk) -> RuntimeResult<()> {
-        // Reset computational state
+        // Reset invocation state
         self.call_stack.clear();
         self.stack.clear();
 
         // Make main() a real value and push it onto the stack
         let main_name = self.intern_string("<main>");
-        let main_fn = self.insert_into_heap(HeapObject::LoxClosure {
+        let main_fn = LoxClosure {
             name: main_name,
             arity: 0,
             chunk: Rc::new(main_chunk),
             upvalues: Rc::new(vec![]),
-        });
-
-        self.push(Value::Obj(main_fn.clone()));
+        };
+        let main_fn = self.closure_heap.insert(main_fn);
+        self.push(Value::Closure(main_fn));
 
         // Call main to start the program
-        self.call(main_fn, 0)?;
+        self.call(self.peek(0)?, 0)?;
 
         // Print stack trace on failure
         let result = self.run();
@@ -297,15 +310,14 @@ impl VM {
                         upvalues.push(upvalue);
                     }
 
-                    let closure_obj = HeapObject::LoxClosure {
+                    let closure = Value::Closure(self.closure_heap.insert(LoxClosure {
                         name,
                         arity,
                         chunk: chunk.clone(),
                         upvalues: Rc::new(upvalues),
-                    };
+                    }));
 
-                    let closure_value = self.make_heap_value(closure_obj);
-                    self.push(closure_value);
+                    self.push(closure);
                 }
                 OpCode::GetUpvalue => {
                     let idx = self.frame_mut().read_u8() as usize;
@@ -333,106 +345,83 @@ impl VM {
                 OpCode::MakeClass => {
                     let idx = self.frame_mut().read_u8();
                     let name = self.lookup_string(idx);
-                    let class_obj = HeapObject::LoxClass {
+
+                    let class_obj = LoxClass {
                         name,
                         methods: HashMap::new(),
                     };
-                    let class_value = self.make_heap_value(class_obj);
+                    let class_value = Value::Class(self.class_heap.insert(class_obj));
                     self.push(class_value);
                 }
                 OpCode::GetProperty => {
-                    let gc_ptr = self
-                        .peek(0)?
-                        .try_into_heap_object()
-                        .ok_or(RuntimeError::NotAnInstance)?;
+                    let idx = self.frame_mut().read_u8();
+                    let name = self.lookup_string(idx);
 
-                    match &*gc_ptr.borrow() {
-                        HeapObject::LoxInstance { fields, class, .. } => {
-                            let idx = self.frame_mut().read_u8();
-                            let name = self.lookup_string(idx);
-
-                            let value = match fields.get(&name) {
-                                Some(value) => value.clone(),
-                                None => match &*class.borrow() {
-                                    HeapObject::LoxClass { methods, .. } => {
-                                        match methods.get(&name) {
-                                            Some(method) => {
-                                                // Build a LoxBoundMethod
-                                                self.make_heap_value(HeapObject::LoxBoundMethod {
-                                                    receiver: gc_ptr.clone(),
-                                                    closure: method.clone(),
-                                                })
-                                            }
-                                            None => return Err(RuntimeError::UndefinedProperty),
-                                        }
-                                    }
-                                    _ => panic!("Instance has no class"),
-                                },
-                            };
-
-                            // Pop the instance, push the bound method
-                            self.pop()?;
-                            self.push(value);
-                        }
+                    let instance_ptr = match self.peek(0)? {
+                        Value::Instance(ptr) => ptr,
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
+                    let instance = instance_ptr.borrow();
+
+                    let value = match instance.fields.get(&name) {
+                        Some(value) => value.clone(),
+                        None => match instance.class.borrow().methods.get(&name) {
+                            Some(method_ptr) => {
+                                let bound_method = LoxBoundMethod {
+                                    receiver: instance_ptr.clone(),
+                                    closure: method_ptr.clone(),
+                                };
+                                Value::BoundMethod(self.bound_method_heap.insert(bound_method))
+                            }
+                            None => return Err(RuntimeError::UndefinedProperty),
+                        },
+                    };
+
+                    // Pop the instance, push the bound method
+                    self.pop()?;
+                    self.push(value);
                 }
                 OpCode::SetProperty => {
+                    let idx = self.frame_mut().read_u8();
+                    let name = self.lookup_string(idx);
+
                     let value = self.peek(0)?;
-
-                    let mut gc_ptr = self
-                        .peek(1)?
-                        .try_into_heap_object()
-                        .ok_or(RuntimeError::NotAnInstance)?;
-
-                    match &mut *gc_ptr.borrow_mut() {
-                        HeapObject::LoxInstance { fields, .. } => {
-                            let idx = self.frame_mut().read_u8();
-                            let name = self.lookup_string(idx);
-
-                            fields.insert(name, value.clone());
-
-                            // Remove the instance from the stack, but leave the value
-                            self.pop()?;
-                            self.pop()?;
-                            self.push(value.clone());
-                        }
+                    let mut instance_ptr = match self.peek(1)? {
+                        Value::Instance(ptr) => ptr,
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
+                    let mut instance = instance_ptr.borrow_mut();
+
+                    instance.fields.insert(name, value.clone());
+
+                    // Remove the instance from the stack, but leave the value
+                    self.pop()?;
+                    self.pop()?;
+                    self.push(value);
                 }
                 OpCode::MakeMethod => {
                     let idx = self.frame_mut().read_u8();
                     let method_name = self.lookup_string(idx);
 
-                    let method_closure = self.peek(0)?;
-                    let mut gc_ptr = self
-                        .peek(1)?
-                        .try_into_heap_object()
-                        .ok_or(RuntimeError::NotACallable)?;
-
-                    match &mut *gc_ptr.borrow_mut() {
-                        HeapObject::LoxClass { methods, .. } => {
-                            methods.insert(
-                                method_name,
-                                method_closure
-                                    .try_into_heap_object()
-                                    .ok_or(RuntimeError::NotACallable)?,
-                            );
-                        }
+                    let method_ptr = match self.peek(0)? {
+                        Value::Closure(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotACallable),
+                    };
+                    let mut class_ptr = match self.peek(1)? {
+                        Value::Class(ptr) => ptr,
                         _ => return Err(RuntimeError::NotAClass),
                     };
 
-                    self.pop()?;
+                    class_ptr
+                        .borrow_mut()
+                        .methods
+                        .insert(method_name, method_ptr);
+                    self.pop()?; // pop just the method
                 }
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
-                    self.call(
-                        self.peek(arg_count)?
-                            .try_into_heap_object()
-                            .ok_or(RuntimeError::NotACallable)?,
-                        arg_count,
-                    )?;
+                    self.call(self.peek(arg_count)?, arg_count)?;
                 }
                 OpCode::Return => {
                     // Rescue the return value off the stack
@@ -539,34 +528,14 @@ impl VM {
         self.string_table.get_interned(s)
     }
 
-    pub fn insert_into_heap(&mut self, obj: HeapObject) -> GcPtr<HeapObject> {
-        self.heap.insert(obj)
-    }
+    // TODO heap insert methods?
 
-    pub fn make_heap_value(&mut self, obj: HeapObject) -> Value {
-        Value::Obj(self.insert_into_heap(obj))
-    }
-
-    pub fn call(&mut self, callee: GcPtr<HeapObject>, arg_count: usize) -> RuntimeResult<()> {
+    pub fn call(&mut self, callee: Value, arg_count: usize) -> RuntimeResult<()> {
         // How we call it depends on the object -- do a big match
-        match &*callee.borrow() {
-            HeapObject::LoxClosure {
-                name,
-                arity,
-                chunk,
-                upvalues,
-            } => {
-                // Check that the arity matches, and push the new frame
-                if *arity != arg_count {
-                    return Err(RuntimeError::WrongArity);
-                }
-
-                self.push_new_frame(arg_count, name.clone(), chunk.clone(), upvalues.clone());
-            }
-            HeapObject::NativeFunction {
-                arity, function, ..
-            } => {
-                if *arity != arg_count {
+        match callee {
+            Value::Closure(ptr) => self.call_closure(ptr, arg_count),
+            Value::NativeFunction(func) => {
+                if func.0.arity != arg_count {
                     return Err(RuntimeError::WrongArity);
                 }
 
@@ -574,45 +543,70 @@ impl VM {
                 let start_idx = self.stack.len() - arg_count;
                 let arg_slice = &self.stack[start_idx..];
 
-                let return_value = match function(arg_slice) {
-                    Ok(v) => v,
-                    Err(error_str) => return Err(RuntimeError::NativeError(error_str)),
-                };
-
-                // Strip off the args and the native fn, putting the return value on instead
-                self.stack.truncate(start_idx - 1);
-                self.push(return_value);
+                match (func.0.function)(arg_slice) {
+                    Ok(return_value) => {
+                        // Strip off the args and the native fn, putting the return value on instead
+                        self.stack.truncate(start_idx - 1);
+                        self.push(return_value);
+                        Ok(())
+                    }
+                    Err(error_str) => Err(RuntimeError::NativeError(error_str)),
+                }
             }
-            HeapObject::LoxClass { methods, .. } => {
+            Value::Class(class_ptr) => {
                 // Create a "blank" instance
-                let instance = self.make_heap_value(HeapObject::LoxInstance {
-                    class: callee.clone(),
+                let instance_value = Value::Instance(self.instance_heap.insert(LoxInstance {
+                    class: class_ptr.clone(),
                     fields: HashMap::new(),
-                });
+                }));
 
                 // Inject it on the stack, underneath the arguments (where the class was).
                 let slot_0 = self.stack.len() - arg_count - 1;
-                self.stack[slot_0] = instance;
+                self.stack[slot_0] = instance_value;
 
                 // Then call the initializer, if it exists. The arguments will still be there,
                 // and despite the initializer being a bound method in spirit, calling it as
                 // a closure will work, since `this` is already in slot #0.
-                if let Some(init) = methods.get(&self.init_string) {
-                    self.call(init.clone(), arg_count)?
+                if let Some(init) = class_ptr.borrow().methods.get(&self.init_string) {
+                    self.call_closure(init.clone(), arg_count)?
                 } else if arg_count > 0 {
                     return Err(RuntimeError::ArgumentsToDefaultInitializer);
-                }
+                };
 
                 // No need to clean the stack, that will happen when we hit a return.
+                Ok(())
             }
-            HeapObject::LoxInstance { .. } => return Err(RuntimeError::NotACallable),
-            HeapObject::LoxBoundMethod { receiver, closure } => {
+            Value::BoundMethod(ptr) => {
+                let bound_method = ptr.borrow();
+
                 // Inject the receiver at slot #0 in the frame
                 let slot_0 = self.stack.len() - arg_count - 1;
-                self.stack[slot_0] = Value::Obj(receiver.clone());
-                self.call(closure.clone(), arg_count)?
+                self.stack[slot_0] = Value::Instance(bound_method.receiver.clone());
+                self.call_closure(bound_method.closure.clone(), arg_count)
             }
+            _ => Err(RuntimeError::NotACallable),
         }
+    }
+
+    // Nice to re-use this method
+    fn call_closure(
+        &mut self,
+        closure_ptr: GcPtr<LoxClosure>,
+        arg_count: usize,
+    ) -> RuntimeResult<()> {
+        let closure = closure_ptr.borrow();
+
+        // Check that the arity matches, and push the new frame
+        if closure.arity != arg_count {
+            return Err(RuntimeError::WrongArity);
+        }
+
+        self.push_new_frame(
+            arg_count,
+            closure.name.clone(),
+            closure.chunk.clone(),
+            closure.upvalues.clone(),
+        );
 
         Ok(())
     }
@@ -634,8 +628,11 @@ impl VM {
         // Same with open upvalues.
 
         // Objects might point to strings, so let's kill the objects first, to
-        // claim more strings.
-        self.heap.sweep();
+        // claim more strings. Order of heaps doesn't matter though.
+        self.closure_heap.sweep();
+        self.class_heap.sweep();
+        self.instance_heap.sweep();
+        self.bound_method_heap.sweep();
         self.string_table.clean();
     }
 

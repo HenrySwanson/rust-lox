@@ -42,7 +42,7 @@ impl<T: Traceable> GcPtr<T> {
         })
     }
 
-    pub fn try_borrow_mut(&self) -> RefMut<Option<T>> {
+    pub fn try_borrow_mut(&mut self) -> RefMut<Option<T>> {
         self.ptr.object.borrow_mut()
     }
 

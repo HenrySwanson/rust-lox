@@ -7,44 +7,66 @@ use super::chunk::Chunk;
 use super::gc::{GcPtr, Traceable};
 use super::string_interning::InternedString;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Value {
     Number(i64), // TODO should be f64, just like Token::Number et al
     Boolean(bool),
     Nil,
     String(InternedString),
-    Obj(GcPtr<HeapObject>),
+    Closure(GcPtr<LoxClosure>),
+    NativeFunction(NativeFunction), // no GC in here
+    Class(GcPtr<LoxClass>),
+    Instance(GcPtr<LoxInstance>),
+    BoundMethod(GcPtr<LoxBoundMethod>),
 }
+
+pub struct LoxClosure {
+    pub name: InternedString,
+    pub arity: usize,
+    pub chunk: Rc<Chunk>,
+    pub upvalues: Rc<Vec<LiveUpvalue>>,
+}
+
+// Native functions are kinda tricky -- should be interned like Strings
+// TODO move to native.rs
 
 pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
 
-pub enum HeapObject {
-    LoxClosure {
-        // TODO pull this into a struct, so you can stuff it into a callframe
-        name: InternedString,
-        arity: usize,
-        chunk: Rc<Chunk>,
-        upvalues: Rc<Vec<LiveUpvalue>>,
-    },
-    NativeFunction {
-        name: InternedString,
-        arity: usize,
-        function: NativeFnType,
-    },
-    LoxClass {
-        name: InternedString,
-        methods: HashMap<InternedString, GcPtr<HeapObject>>,
-    },
-    LoxInstance {
-        class: GcPtr<HeapObject>, // TODO is it time for multiple heaps?
-        fields: HashMap<InternedString, Value>,
-    },
-    LoxBoundMethod {
-        receiver: GcPtr<HeapObject>,
-        closure: GcPtr<HeapObject>,
-    },
+#[derive(Clone)]
+pub struct NativeFunction(pub Rc<NativeFunctionData>);
+
+pub struct NativeFunctionData {
+    pub name: InternedString,
+    pub arity: usize,
+    pub function: NativeFnType,
 }
 
+impl PartialEq for NativeFunction {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for NativeFunction {}
+
+// -- end native stuff
+
+pub struct LoxClass {
+    pub name: InternedString,
+    pub methods: HashMap<InternedString, GcPtr<LoxClosure>>,
+}
+
+pub struct LoxInstance {
+    pub class: GcPtr<LoxClass>,
+    pub fields: HashMap<InternedString, Value>,
+}
+
+pub struct LoxBoundMethod {
+    pub receiver: GcPtr<LoxInstance>,
+    pub closure: GcPtr<LoxClosure>,
+}
+
+// change names around
 #[derive(Clone)]
 pub struct LiveUpvalue {
     location: Rc<RefCell<UpvalueType>>,
@@ -52,11 +74,8 @@ pub struct LiveUpvalue {
 
 #[derive(Clone)]
 pub enum UpvalueType {
-    Open(usize), // lives on the stack
-    Closed(Value), // was popped off the stack
-                 // this seems like a reference cycle risk, but there's no way to get
-                 // back to an upvalue without going through a Gc<HeapObject>, allowing
-                 // for garbage collection to claim it
+    Open(usize),   // lives on the stack
+    Closed(Value), // was popped off the stack, owned by this upvalue
 }
 
 impl Value {
@@ -67,94 +86,106 @@ impl Value {
         }
     }
 
+    // TODO rename
     pub fn mark_internals(&self) {
         match self {
             Value::Number(_) | Value::Boolean(_) | Value::Nil | Value::String(_) => {}
-            Value::Obj(ptr) => ptr.mark(),
-        }
-    }
-
-    pub fn try_into_heap_object(self) -> Option<GcPtr<HeapObject>> {
-        match self {
-            Value::Obj(gc_ptr) => Some(gc_ptr),
-            _ => None,
+            Value::Closure(ptr) => ptr.mark(),
+            Value::NativeFunction(_) => {}
+            Value::Class(ptr) => ptr.mark(),
+            Value::Instance(ptr) => ptr.mark(),
+            Value::BoundMethod(ptr) => ptr.mark(),
         }
     }
 }
-
-impl PartialEq<Value> for Value {
-    fn eq(&self, other: &Self) -> bool {
-        use Value::*;
-        match (self, other) {
-            (Number(n), Number(m)) => n == m,
-            (Boolean(a), Boolean(b)) => a == b,
-            (Nil, Nil) => true,
-            (String(s), String(t)) => s == t,
-            (Obj(x), Obj(y)) => x == y,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Value {}
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        macro_rules! fmt_or_garbage {
+            ($handle:expr, $f:expr) => {
+                match &*$handle.try_borrow() {
+                    Some(obj) => obj.fmt($f),
+                    None => write!($f, "<garbage>"),
+                }
+            };
+        }
+
         match self {
             Value::Number(n) => n.fmt(f),
             Value::Boolean(b) => b.fmt(f),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => s.fmt(f),
-            Value::Obj(handle) => match &*handle.try_borrow() {
-                Some(obj) => obj.fmt(f),
-                None => write!(f, "<garbage>"),
-            },
+            Value::Closure(ptr) => fmt_or_garbage!(ptr, f),
+            Value::NativeFunction(func) => func.fmt(f),
+            Value::Class(ptr) => fmt_or_garbage!(ptr, f),
+            Value::Instance(ptr) => fmt_or_garbage!(ptr, f),
+            Value::BoundMethod(ptr) => fmt_or_garbage!(ptr, f),
         }
     }
 }
 
-impl fmt::Debug for HeapObject {
+impl fmt::Debug for LoxClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            HeapObject::LoxClosure { name, .. } => write!(f, "<fn {}>", name),
-            HeapObject::NativeFunction { name, .. } => write!(f, "<native fn {}>", name),
-            HeapObject::LoxClass { name, .. } => write!(f, "{}", name),
-            HeapObject::LoxInstance { class, .. } => write!(f, "{:?} instance", class.borrow()),
-            HeapObject::LoxBoundMethod { closure, .. } => closure.borrow().fmt(f),
+        write!(f, "<fn {}>", self.name)
+    }
+}
+
+impl fmt::Debug for NativeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<native fn {}>", self.0.name)
+    }
+}
+
+impl fmt::Debug for LoxClass {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+impl fmt::Debug for LoxInstance {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "instance of {:?}", self.class.borrow())
+    }
+}
+
+impl fmt::Debug for LoxBoundMethod {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.closure.borrow().fmt(f)
+    }
+}
+
+impl Traceable for LoxClosure {
+    fn trace(&self) {
+        // A closed upvalue owns an object, so we have to mark our upvalues
+        for u in self.upvalues.iter() {
+            u.mark_internals();
         }
     }
 }
 
-impl Traceable for HeapObject {
+impl Traceable for LoxClass {
     fn trace(&self) {
-        match self {
-            HeapObject::LoxClosure { upvalues, .. } => {
-                // A closed upvalue owns an object, which must be marked.
-                for u in upvalues.iter() {
-                    u.mark_internals();
-                }
-            }
-            HeapObject::NativeFunction { .. } => {
-                // nothing to do here
-            }
-            HeapObject::LoxClass { methods, .. } => {
-                // A class only has a name; nothing to do here
-                for m in methods.values() {
-                    m.mark();
-                }
-            }
-            HeapObject::LoxInstance { class, fields, .. } => {
-                // An instance has many things it can access
-                class.mark();
-                for f in fields.values() {
-                    f.mark_internals();
-                }
-            }
-            HeapObject::LoxBoundMethod { receiver, closure } => {
-                receiver.mark();
-                closure.mark();
-            }
+        // Mark our methods
+        for m in self.methods.values() {
+            m.mark();
         }
+    }
+}
+
+impl Traceable for LoxInstance {
+    fn trace(&self) {
+        // Mark our class and our fields (methods are marked through the class)
+        self.class.mark();
+        for f in self.fields.values() {
+            f.mark_internals();
+        }
+    }
+}
+
+impl Traceable for LoxBoundMethod {
+    fn trace(&self) {
+        self.receiver.mark();
+        self.closure.mark();
     }
 }
 
