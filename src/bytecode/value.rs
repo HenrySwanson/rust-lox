@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use super::chunk::Chunk;
 use super::gc::{GcPtr, Traceable};
+use super::native::NativeFunction;
 use super::string_interning::InternedString;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -26,30 +27,6 @@ pub struct LoxClosure {
     pub chunk: Rc<Chunk>,
     pub upvalues: Rc<Vec<LiveUpvalue>>,
 }
-
-// Native functions are kinda tricky -- should be interned like Strings
-// TODO move to native.rs
-
-pub type NativeFnType = fn(&[Value]) -> Result<Value, String>;
-
-#[derive(Clone)]
-pub struct NativeFunction(pub Rc<NativeFunctionData>);
-
-pub struct NativeFunctionData {
-    pub name: InternedString,
-    pub arity: usize,
-    pub function: NativeFnType,
-}
-
-impl PartialEq for NativeFunction {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for NativeFunction {}
-
-// -- end native stuff
 
 pub struct LoxClass {
     pub name: InternedString,
@@ -132,7 +109,7 @@ impl fmt::Debug for LoxClosure {
 
 impl fmt::Debug for NativeFunction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<native fn {}>", self.0.name)
+        write!(f, "<native fn {}>", self.data.name)
     }
 }
 

@@ -6,12 +6,10 @@ use super::compiler::Upvalue as UpvalueDef;
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
+use super::native::NativeFunction;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{
-    LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, NativeFunction,
-    NativeFunctionData, Value,
-};
+use super::value::{LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, Value};
 
 struct CallFrame {
     ip: usize,
@@ -91,13 +89,7 @@ impl VM {
         // Define natives
         for (name, arity, function) in native::get_natives().iter().copied() {
             let name = vm.intern_string(name);
-            let native_fn_data = NativeFunctionData {
-                name: name.clone(),
-                arity,
-                function,
-            };
-            let native_fn = NativeFunction(Rc::new(native_fn_data));
-
+            let native_fn = NativeFunction::new(&name, arity, function);
             vm.globals.insert(name, Value::NativeFunction(native_fn));
         }
 
@@ -535,7 +527,7 @@ impl VM {
         match callee {
             Value::Closure(ptr) => self.call_closure(ptr, arg_count),
             Value::NativeFunction(func) => {
-                if func.0.arity != arg_count {
+                if func.data.arity != arg_count {
                     return Err(RuntimeError::WrongArity);
                 }
 
@@ -543,7 +535,7 @@ impl VM {
                 let start_idx = self.stack.len() - arg_count;
                 let arg_slice = &self.stack[start_idx..];
 
-                match (func.0.function)(arg_slice) {
+                match (func.data.function)(arg_slice) {
                     Ok(return_value) => {
                         // Strip off the args and the native fn, putting the return value on instead
                         self.stack.truncate(start_idx - 1);
