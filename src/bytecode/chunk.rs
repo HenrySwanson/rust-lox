@@ -171,7 +171,7 @@ impl Chunk {
 
         macro_rules! print_three {
             ($op:expr, $first:expr, $second:expr) => {
-                println!("{:20} {:04} {:?}", $op, $first, $second);
+                println!("{:20} {:04?} {:?}", $op, $first, $second);
             };
         }
 
@@ -243,6 +243,13 @@ impl Chunk {
             OpCode::GetProperty => print_with_constant!("OP_GET_PROPERTY"),
             OpCode::SetProperty => print_with_constant!("OP_SET_PROPERTY"),
             OpCode::MakeMethod => print_with_constant!("OP_MAKE_METHOD"),
+            OpCode::Invoke => {
+                let idx = self.read_u8(offset + 1);
+                let method_name = self.lookup_constant(idx);
+                let num_args = self.read_u8(offset + 2);
+
+                print_three!("OP_INVOKE", method_name, num_args);
+            }
             // Other
             OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
             OpCode::Print => println!("OP_PRINT"),

@@ -410,6 +410,30 @@ impl VM {
                         .insert(method_name, method_ptr);
                     self.pop()?; // pop just the method
                 }
+                OpCode::Invoke => {
+                    let idx = self.frame_mut().read_u8();
+                    let method_name = self.lookup_string(idx);
+                    let arg_count: usize = self.frame_mut().read_u8().into();
+
+                    // TODO how much of this do i need to extract for inheritance stuff?
+                    let receiver_ptr = match self.peek(arg_count)? {
+                        Value::Instance(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+                    let receiver = receiver_ptr.borrow();
+
+                    // Gotta check the fields still; must behave identically to a
+                    // OP_GET_PROPERTY + OP_CALL
+                    if let Some(value) = receiver.fields.get(&method_name) {
+                        let slot_0 = self.stack.len() - arg_count - 1;
+                        self.stack[slot_0] = value.clone();
+                        self.call(value.clone(), arg_count)?;
+                    } else if let Some(method) = receiver.class.borrow().methods.get(&method_name) {
+                        self.call_closure(method.clone(), arg_count)?;
+                    } else {
+                        return Err(RuntimeError::UndefinedProperty);
+                    }
+                }
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();

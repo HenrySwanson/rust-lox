@@ -383,18 +383,7 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Assignment(var, expr) => self.set_variable(&var.name, expr, line_no)?,
             ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => self.compile_and(lhs, rhs)?,
             ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => self.compile_or(lhs, rhs)?,
-            ast::ExprKind::Call(callee, args) => {
-                // Put the callee and its args on the stack, in order
-                self.compile_expression(callee.as_ref())?;
-                for arg in args.iter() {
-                    self.compile_expression(arg)?;
-                }
-                self.current_chunk().write_op_with_u8(
-                    OpCode::Call,
-                    u8::try_from(args.len()).expect("Too many arguments in AST"),
-                    line_no,
-                );
-            }
+            ast::ExprKind::Call(callee, args) => self.compile_call(callee, args)?,
             ast::ExprKind::Get(expr, name) => {
                 let idx = self.add_string_constant(name);
                 self.compile_expression(expr)?;
@@ -520,6 +509,37 @@ impl<'strtable> Compiler<'strtable> {
             .write_op(OpCode::Pop, rhs.span.lo.line_no);
         self.compile_expression(rhs)?;
         self.current_chunk().patch_jump(jump_for_true);
+
+        Ok(())
+    }
+
+    fn compile_call(&mut self, callee: &ast::Expr, args: &Vec<ast::Expr>) -> CompilerResult<()> {
+        let num_args = u8::try_from(args.len()).expect("Too many arguments in AST");
+
+        // Special case: If we're calling a method on an instance, we can emit an OP_INVOKE
+        if let ast::ExprKind::Get(instance_expr, method_name) = &callee.kind {
+            // We put the instance on the stack, and then all the arguments
+            self.compile_expression(instance_expr)?;
+            for arg in args.iter() {
+                self.compile_expression(arg)?;
+            }
+
+            // Then we emit the OP_INVOKE
+            let line_no = callee.span.hi.line_no;
+            let idx = self.add_string_constant(method_name);
+
+            self.current_chunk().write_op(OpCode::Invoke, line_no);
+            self.current_chunk().write_u8(idx, line_no);
+            self.current_chunk().write_u8(num_args, line_no);
+        } else {
+            // Normal path: put the callee and its args on the stack, in order
+            self.compile_expression(callee)?;
+            for arg in args.iter() {
+                self.compile_expression(arg)?;
+            }
+            self.current_chunk()
+                .write_op_with_u8(OpCode::Call, num_args, callee.span.hi.line_no);
+        }
 
         Ok(())
     }
