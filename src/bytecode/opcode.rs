@@ -41,6 +41,9 @@ pub enum OpCode {
     SetProperty,
     MakeMethod,
     Invoke,
+    Inherit,
+    GetSuper,
+    SuperInvoke,
     // Other
     Call,
     Return,
@@ -68,6 +71,9 @@ impl OpCode {
             OpCode::GetProperty | OpCode::SetProperty => 1,
             OpCode::MakeMethod => 1,
             OpCode::Invoke => 2,
+            OpCode::Inherit => 0,
+            OpCode::GetSuper => 1,
+            OpCode::SuperInvoke => 2,
             OpCode::Call => 1,
             OpCode::Return | OpCode::Print | OpCode::Pop => 0,
         };

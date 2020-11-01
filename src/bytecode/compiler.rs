@@ -17,6 +17,7 @@ const MAX_UPVALUES: usize = 256;
 type UpvalueIdx = u8;
 
 const THIS_STR: &str = "this";
+const SUPER_STR: &str = "super";
 
 struct Local {
     name: String,
@@ -139,7 +140,6 @@ impl Context {
     }
 }
 
-// TODO: kill all the panics
 impl<'strtable> Compiler<'strtable> {
     pub fn new(string_table: &'strtable mut StringInterner) -> Self {
         Compiler {
@@ -222,7 +222,7 @@ impl<'strtable> Compiler<'strtable> {
                 }
                 self.current_chunk().write_op(OpCode::Return, line_no);
             }
-            ast::StmtKind::ClassDecl(name, _superclass, methods) => {
+            ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 self.declare_variable(name)?;
 
                 // Store the name as a constant
@@ -231,8 +231,23 @@ impl<'strtable> Compiler<'strtable> {
                     .write_op_with_u8(OpCode::MakeClass, idx, line_no);
                 self.define_variable(name, line_no)?;
 
-                // Load the class onto the stack
-                self.get_variable(name, line_no)?;
+                // If there's a superclass, load it in the next local slot.
+                // Whether or not there is, the class goes on the stack next.
+                if let Some(superclass) = superclass {
+                    if superclass.name == *name {
+                        todo!();
+                    }
+
+                    self.begin_scope();
+                    self.declare_variable(SUPER_STR)?;
+                    self.define_variable(SUPER_STR, line_no)?;
+
+                    self.get_variable(&superclass.name, line_no)?;
+                    self.get_variable(name, line_no)?;
+                    self.current_chunk().write_op(OpCode::Inherit, line_no);
+                } else {
+                    self.get_variable(name, line_no)?;
+                }
 
                 // Deal with the methods
                 for method in methods.iter() {
@@ -253,6 +268,10 @@ impl<'strtable> Compiler<'strtable> {
 
                 // Pop the class off the stack
                 self.current_chunk().write_op(OpCode::Pop, line_no);
+
+                if superclass.is_some() {
+                    self.end_scope();
+                }
             }
         };
 
@@ -318,7 +337,7 @@ impl<'strtable> Compiler<'strtable> {
         // Create the new compiler context
         let mut new_context = Context::new(match fn_type {
             FunctionType::Function => "",
-            FunctionType::Method | FunctionType::Initializer => "this",
+            FunctionType::Method | FunctionType::Initializer => THIS_STR,
         });
         if fn_type == FunctionType::Initializer {
             new_context.is_initializer = true;
@@ -400,7 +419,14 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::This(_) => {
                 self.get_variable(THIS_STR, line_no)?;
             }
-            _ => panic!("Don't know how to compile that expression yet!"),
+            ast::ExprKind::Super(_, method_name) => {
+                self.get_variable(THIS_STR, line_no)?;
+                self.get_variable(SUPER_STR, line_no)?;
+
+                let idx = self.add_string_constant(method_name);
+                self.current_chunk()
+                    .write_op_with_u8(OpCode::GetSuper, idx, line_no);
+            }
         };
 
         Ok(())
@@ -516,29 +542,53 @@ impl<'strtable> Compiler<'strtable> {
     fn compile_call(&mut self, callee: &ast::Expr, args: &Vec<ast::Expr>) -> CompilerResult<()> {
         let num_args = u8::try_from(args.len()).expect("Too many arguments in AST");
 
-        // Special case: If we're calling a method on an instance, we can emit an OP_INVOKE
-        if let ast::ExprKind::Get(instance_expr, method_name) = &callee.kind {
-            // We put the instance on the stack, and then all the arguments
-            self.compile_expression(instance_expr)?;
-            for arg in args.iter() {
-                self.compile_expression(arg)?;
-            }
+        // Special cases: If we're calling a method on an instance, we can emit an OP_INVOKE,
+        // and if we're calling a super method, we can emit OP_SUPER_INVOKE.
+        match &callee.kind {
+            ast::ExprKind::Get(instance_expr, method_name) => {
+                // We put the instance on the stack, and then all the arguments
+                self.compile_expression(instance_expr)?;
+                for arg in args.iter() {
+                    self.compile_expression(arg)?;
+                }
 
-            // Then we emit the OP_INVOKE
-            let line_no = callee.span.hi.line_no;
-            let idx = self.add_string_constant(method_name);
+                // Then we emit the OP_INVOKE
+                let line_no = callee.span.hi.line_no;
+                let idx = self.add_string_constant(method_name);
 
-            self.current_chunk().write_op(OpCode::Invoke, line_no);
-            self.current_chunk().write_u8(idx, line_no);
-            self.current_chunk().write_u8(num_args, line_no);
-        } else {
-            // Normal path: put the callee and its args on the stack, in order
-            self.compile_expression(callee)?;
-            for arg in args.iter() {
-                self.compile_expression(arg)?;
+                self.current_chunk().write_op(OpCode::Invoke, line_no);
+                self.current_chunk().write_u8(idx, line_no);
+                self.current_chunk().write_u8(num_args, line_no);
             }
-            self.current_chunk()
-                .write_op_with_u8(OpCode::Call, num_args, callee.span.hi.line_no);
+            ast::ExprKind::Super(_, method_name) => {
+                // We put the reciever on the stack, then all the arguments, then the superclass
+                let line_no = callee.span.lo.line_no;
+                self.get_variable(THIS_STR, line_no)?;
+                for arg in args.iter() {
+                    self.compile_expression(arg)?;
+                }
+                self.get_variable(SUPER_STR, line_no)?;
+
+                // Then we emit the OP_SUPER_INVOKE
+                let line_no = callee.span.hi.line_no;
+                let idx = self.add_string_constant(method_name);
+
+                self.current_chunk().write_op(OpCode::SuperInvoke, line_no);
+                self.current_chunk().write_u8(idx, line_no);
+                self.current_chunk().write_u8(num_args, line_no);
+            }
+            _ => {
+                // Normal path: put the callee and its args on the stack, in order
+                self.compile_expression(callee)?;
+                for arg in args.iter() {
+                    self.compile_expression(arg)?;
+                }
+                self.current_chunk().write_op_with_u8(
+                    OpCode::Call,
+                    num_args,
+                    callee.span.hi.line_no,
+                );
+            }
         }
 
         Ok(())

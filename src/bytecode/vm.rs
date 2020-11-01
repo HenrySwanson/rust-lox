@@ -434,6 +434,66 @@ impl VM {
                         return Err(RuntimeError::UndefinedProperty);
                     }
                 }
+                OpCode::Inherit => {
+                    let superclass_ptr = match self.peek(1)? {
+                        Value::Class(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotAClass),
+                    };
+
+                    let mut class_ptr = match self.peek(0)? {
+                        Value::Class(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotAClass),
+                    };
+
+                    let methods = superclass_ptr.borrow().methods.clone();
+                    class_ptr.borrow_mut().methods = methods;
+                }
+                OpCode::GetSuper => {
+                    let idx = self.frame_mut().read_u8();
+                    let method_name = self.lookup_string(idx);
+
+                    let method_ptr = match self.peek(0)? {
+                        Value::Class(ptr) => match ptr.borrow().methods.get(&method_name) {
+                            Some(method_ptr) => method_ptr.clone(),
+                            None => return Err(RuntimeError::UndefinedProperty),
+                        },
+                        _ => return Err(RuntimeError::NotAClass),
+                    };
+
+                    let instance_ptr = match self.peek(1)? {
+                        Value::Instance(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotAnInstance),
+                    };
+
+                    // TODO extract into method?
+                    let bound_method = LoxBoundMethod {
+                        receiver: instance_ptr.clone(),
+                        closure: method_ptr,
+                    };
+                    let value = Value::BoundMethod(self.bound_method_heap.insert(bound_method));
+
+                    // Remove the two operands and push the result
+                    self.pop()?;
+                    self.pop()?;
+                    self.push(value);
+                }
+                OpCode::SuperInvoke => {
+                    let idx = self.frame_mut().read_u8();
+                    let method_name = self.lookup_string(idx);
+                    let arg_count: usize = self.frame_mut().read_u8().into();
+
+                    let superclass_ptr = match self.pop()? {
+                        Value::Class(ptr) => ptr,
+                        _ => return Err(RuntimeError::NotAClass),
+                    };
+
+                    // No need to check the fields, this must be a method. The stack is
+                    // already set up exactly how we want it.
+                    match superclass_ptr.borrow().methods.get(&method_name) {
+                        Some(method) => self.call_closure(method.clone(), arg_count)?,
+                        None => return Err(RuntimeError::UndefinedProperty),
+                    };
+                }
                 // Other
                 OpCode::Call => {
                     let arg_count: usize = self.frame_mut().read_u8().into();
