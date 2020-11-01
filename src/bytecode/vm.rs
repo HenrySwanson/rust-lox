@@ -11,6 +11,8 @@ use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, Value};
 
+const GC_PERIOD: u32 = 1000;
+
 struct CallFrame {
     ip: usize,
     base_ptr: usize,
@@ -132,8 +134,13 @@ impl VM {
     }
 
     fn run(&mut self) -> RuntimeResult<()> {
+        let mut gc_counter = 0;
         loop {
-            self.collect_garbage();
+            if gc_counter == GC_PERIOD {
+                self.collect_garbage();
+                gc_counter = 0;
+            }
+            gc_counter += 1;
 
             #[cfg(feature = "trace-execution")]
             {
