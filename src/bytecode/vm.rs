@@ -142,7 +142,7 @@ impl VM {
                 OpCode::Divide => {
                     // Check for zero
                     if let Value::Number(n) = self.peek_value(0)? {
-                        if n == 0 {
+                        if *n == 0 {
                             return Err(RuntimeError::DivideByZero);
                         }
                     }
@@ -151,6 +151,7 @@ impl VM {
                 }
                 OpCode::Negate => match self.peek_value(0)? {
                     Value::Number(n) => {
+                        let n = n.to_owned();
                         self.pop_value()?;
                         self.push_value(Value::Number(-n));
                     }
@@ -193,7 +194,7 @@ impl VM {
                         return Err(RuntimeError::UndefinedGlobal(name));
                     }
                     // don't pop; assignment may be inside other expressions
-                    let value = self.peek_value(0)?;
+                    let value = self.peek_value(0)?.clone();
                     self.globals.insert(name, value);
                 }
                 OpCode::GetLocal => {
@@ -204,9 +205,9 @@ impl VM {
                 }
                 OpCode::SetLocal => {
                     let base_ptr = self.frame().base_ptr;
-                    let value = self.peek_value(0)?;
                     let idx = self.read_next_u8() as usize;
-                    self.stack[base_ptr + idx] = value;
+                    let value = self.peek_value(0)?;
+                    self.stack[base_ptr + idx] = value.clone();
                 }
                 // Jumps
                 OpCode::Jump => {
@@ -284,9 +285,9 @@ impl VM {
                     let idx = self.read_next_u8() as usize;
                     let value = self.peek_value(0)?;
 
-                    match self.frame().upvalues[idx].set_if_closed(&value) {
+                    match self.frame().upvalues[idx].set_if_closed(value) {
                         Ok(()) => {}
-                        Err(idx) => self.stack[idx] = value,
+                        Err(idx) => self.stack[idx] = value.clone(),
                     }
                 }
                 OpCode::CloseUpvalue => {
@@ -306,11 +307,12 @@ impl VM {
                 OpCode::GetProperty => {
                     let name = self.read_next_idx_as_string();
                     let instance_ptr = match self.peek_value(0)? {
-                        Value::Instance(ptr) => ptr,
+                        Value::Instance(ptr) => ptr.clone(),
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
                     let instance = instance_ptr.borrow();
 
+                    // TODO un-nest
                     let value = match instance.fields.get(&name) {
                         Some(value) => value.clone(),
                         None => match instance.class.borrow().methods.get(&name) {
@@ -333,11 +335,12 @@ impl VM {
                     let name = self.read_next_idx_as_string();
                     let value = self.peek_value(0)?;
                     let mut instance_ptr = match self.peek_value(1)? {
-                        Value::Instance(ptr) => ptr,
+                        Value::Instance(ptr) => ptr.clone(),
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
                     let mut instance = instance_ptr.borrow_mut();
 
+                    let value = value.clone();
                     instance.fields.insert(name, value.clone());
 
                     // Remove the instance from the stack, but leave the value
@@ -352,14 +355,14 @@ impl VM {
                         _ => return Err(RuntimeError::NotACallable),
                     };
                     let mut class_ptr = match self.peek_value(1)? {
-                        Value::Class(ptr) => ptr,
+                        Value::Class(ptr) => ptr.clone(),
                         _ => return Err(RuntimeError::NotAClass),
                     };
 
                     class_ptr
                         .borrow_mut()
                         .methods
-                        .insert(method_name, method_ptr);
+                        .insert(method_name, method_ptr.clone());
                     self.pop_value()?; // pop just the method
                 }
                 OpCode::Invoke => {
@@ -367,7 +370,7 @@ impl VM {
                     let arg_count: usize = self.read_next_u8().into();
 
                     let receiver_ptr = match self.peek_value(arg_count)? {
-                        Value::Instance(ptr) => ptr,
+                        Value::Instance(ptr) => ptr.clone(),
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
                     let receiver = receiver_ptr.borrow();
@@ -391,7 +394,7 @@ impl VM {
                     };
 
                     let mut class_ptr = match self.peek_value(0)? {
-                        Value::Class(ptr) => ptr,
+                        Value::Class(ptr) => ptr.clone(),
                         _ => return Err(RuntimeError::NotAClass),
                     };
 
@@ -477,11 +480,10 @@ impl VM {
         self.stack.pop().ok_or(RuntimeError::StackEmpty)
     }
 
-    fn peek_value(&self, depth: usize) -> RuntimeResult<Value> {
+    fn peek_value(&self, depth: usize) -> RuntimeResult<&Value> {
         let stack_size = self.stack.len();
         self.stack
             .get(stack_size - 1 - depth)
-            .cloned()
             .ok_or(RuntimeError::InvalidStackIndex)
     }
 
@@ -592,7 +594,7 @@ impl VM {
     }
 
     pub fn call(&mut self, arg_count: usize) -> RuntimeResult<()> {
-        let callee = self.peek_value(arg_count)?;
+        let callee = self.peek_value(arg_count)?.clone();
 
         // How we call it depends on the object -- do a big match
         match callee {
@@ -732,7 +734,7 @@ impl VM {
 
         match (lhs, rhs) {
             (Value::Number(a), Value::Number(b)) => {
-                let result = closure(a, b);
+                let result = closure(*a, *b);
                 self.pop_value()?;
                 self.pop_value()?;
                 self.push_value(result);
