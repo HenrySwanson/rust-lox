@@ -55,6 +55,12 @@ pub enum UpvalueType {
     Closed(Value), // was popped off the stack, owned by this upvalue
 }
 
+pub enum PropertyLookup {
+    Field(Value),
+    Method(GcPtr<LoxClosure>),
+    NotFound,
+}
+
 impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
@@ -163,6 +169,21 @@ impl Traceable for LoxBoundMethod {
     fn trace(&self) {
         self.receiver.mark();
         self.closure.mark();
+    }
+}
+
+impl LoxInstance {
+    pub fn lookup(&self, name: &InternedString) -> PropertyLookup {
+        // Look up fields first, then methods
+        if let Some(value) = self.fields.get(name) {
+            return PropertyLookup::Field(value.clone());
+        }
+
+        if let Some(method_ptr) = self.class.borrow().methods.get(name) {
+            return PropertyLookup::Method(method_ptr.clone());
+        }
+
+        return PropertyLookup::NotFound;
     }
 }
 

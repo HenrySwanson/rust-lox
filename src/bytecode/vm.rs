@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
+use super::chunk::{Chunk, ChunkConstant};
 use super::compiler::Upvalue as UpvalueDef;
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
@@ -9,7 +9,9 @@ use super::native;
 use super::native::NativeFunction;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
-use super::value::{LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, Value};
+use super::value::{
+    LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, Value,
+};
 
 const GC_PERIOD: u32 = 1000;
 
@@ -345,8 +347,8 @@ impl VM {
                 OpCode::SetLocal => {
                     let base_ptr = self.frame().base_ptr;
                     let idx = self.read_next_u8() as usize;
-                    let value = self.stack.peek(0)?;
-                    self.stack.set(base_ptr + idx, value.clone())?;
+                    let value = self.stack.peek(0)?.clone();
+                    self.stack.set(base_ptr + idx, value)?;
                 }
                 // Jumps
                 OpCode::Jump => {
@@ -425,7 +427,10 @@ impl VM {
 
                     match self.frame().upvalues[idx].set_if_closed(value) {
                         Ok(()) => {}
-                        Err(idx) => self.stack.set(idx, value.clone())?,
+                        Err(idx) => {
+                            let value = value.clone();
+                            self.stack.set(idx, value)?
+                        }
                     }
                 }
                 OpCode::CloseUpvalue => {
@@ -441,20 +446,16 @@ impl VM {
                 OpCode::GetProperty => {
                     let name = self.read_next_idx_as_string();
                     let instance_ptr = match self.stack.peek(0)? {
-                        Value::Instance(ptr) => ptr.clone(),
+                        Value::Instance(ptr) => ptr,
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
-                    let instance = instance_ptr.borrow();
 
-                    // TODO un-nest
-                    let value = match instance.fields.get(&name) {
-                        Some(value) => value.clone(),
-                        None => match instance.class.borrow().methods.get(&name) {
-                            Some(method_ptr) => self
-                                .object_heap
-                                .insert_new_bound_method(instance_ptr.clone(), method_ptr.clone()),
-                            None => return Err(RuntimeError::UndefinedProperty),
-                        },
+                    let value = match instance_ptr.borrow().lookup(&name) {
+                        PropertyLookup::Field(value) => value,
+                        PropertyLookup::Method(method) => self
+                            .object_heap
+                            .insert_new_bound_method(instance_ptr.clone(), method),
+                        PropertyLookup::NotFound => return Err(RuntimeError::UndefinedProperty),
                     };
 
                     // Pop the instance, push the bound method
@@ -500,21 +501,23 @@ impl VM {
                     let arg_count: usize = self.read_next_u8().into();
 
                     let receiver_ptr = match self.stack.peek(arg_count)? {
-                        Value::Instance(ptr) => ptr.clone(),
+                        Value::Instance(ptr) => ptr,
                         _ => return Err(RuntimeError::NotAnInstance),
                     };
-                    let receiver = receiver_ptr.borrow();
 
                     // Gotta check the fields still; must behave identically to a
                     // OP_GET_PROPERTY + OP_CALL
-                    if let Some(value) = receiver.fields.get(&method_name) {
-                        self.stack.set_back(arg_count, value.clone())?;
-                        self.call(arg_count)?;
-                    } else if let Some(method) = receiver.class.borrow().methods.get(&method_name) {
-                        self.call_closure(method.clone(), arg_count)?;
-                    } else {
-                        return Err(RuntimeError::UndefinedProperty);
-                    }
+                    let lookup = receiver_ptr.borrow().lookup(&method_name);
+                    drop(receiver_ptr); // drop early to appease the BC
+
+                    match lookup {
+                        PropertyLookup::Field(value) => {
+                            self.stack.set_back(arg_count, value)?;
+                            self.call(arg_count)?;
+                        }
+                        PropertyLookup::Method(method) => self.call_closure(method, arg_count)?,
+                        PropertyLookup::NotFound => return Err(RuntimeError::UndefinedProperty),
+                    };
                 }
                 OpCode::Inherit => {
                     let superclass_ptr = match self.stack.peek(1)? {
