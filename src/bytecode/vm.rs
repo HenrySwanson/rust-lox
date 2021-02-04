@@ -47,6 +47,29 @@ pub struct VM {
     object_heap: ObjectHeap,
 }
 
+impl Value {
+    fn cast_to_class(&self) -> RuntimeResult<GcPtr<LoxClass>> {
+        match self {
+            Value::Class(ptr) => Ok(ptr.clone()),
+            _ => Err(RuntimeError::NotAClass),
+        }
+    }
+
+    fn cast_to_instance(&self) -> RuntimeResult<GcPtr<LoxInstance>> {
+        match self {
+            Value::Instance(ptr) => Ok(ptr.clone()),
+            _ => Err(RuntimeError::NotAnInstance),
+        }
+    }
+
+    fn cast_to_closure(&self) -> RuntimeResult<GcPtr<LoxClosure>> {
+        match self {
+            Value::Closure(ptr) => Ok(ptr.clone()),
+            _ => Err(RuntimeError::NotAClosure),
+        }
+    }
+}
+
 impl<T> SafeStack<T> {
     fn new() -> Self {
         SafeStack { stack: vec![] }
@@ -443,10 +466,7 @@ impl VM {
                 }
                 OpCode::GetProperty => {
                     let name = self.read_next_idx_as_string();
-                    let instance_ptr = match self.stack.peek(0)? {
-                        Value::Instance(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotAnInstance),
-                    };
+                    let instance_ptr = self.stack.peek(0)?.cast_to_instance()?;
 
                     let value = match instance_ptr.borrow().lookup(&name) {
                         PropertyLookup::Field(value) => value,
@@ -462,15 +482,10 @@ impl VM {
                 }
                 OpCode::SetProperty => {
                     let name = self.read_next_idx_as_string();
-                    let value = self.stack.peek(0)?;
-                    let mut instance_ptr = match self.stack.peek(1)? {
-                        Value::Instance(ptr) => ptr.clone(),
-                        _ => return Err(RuntimeError::NotAnInstance),
-                    };
-                    let mut instance = instance_ptr.borrow_mut();
+                    let value = self.stack.peek(0)?.clone();
+                    let mut instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
 
-                    let value = value.clone();
-                    instance.fields.insert(name, value.clone());
+                    instance_ptr.borrow_mut().fields.insert(name, value.clone());
 
                     // Remove the instance from the stack, but leave the value
                     self.stack.pop()?;
@@ -479,14 +494,8 @@ impl VM {
                 }
                 OpCode::MakeMethod => {
                     let method_name = self.read_next_idx_as_string();
-                    let method_ptr = match self.stack.peek(0)? {
-                        Value::Closure(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotACallable),
-                    };
-                    let mut class_ptr = match self.stack.peek(1)? {
-                        Value::Class(ptr) => ptr.clone(),
-                        _ => return Err(RuntimeError::NotAClass),
-                    };
+                    let method_ptr = self.stack.peek(0)?.cast_to_closure()?;
+                    let mut class_ptr = self.stack.peek(1)?.cast_to_class()?;
 
                     class_ptr
                         .borrow_mut()
@@ -498,17 +507,11 @@ impl VM {
                     let method_name = self.read_next_idx_as_string();
                     let arg_count: usize = self.read_next_u8().into();
 
-                    let receiver_ptr = match self.stack.peek(arg_count)? {
-                        Value::Instance(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotAnInstance),
-                    };
+                    let receiver_ptr = self.stack.peek(arg_count)?.cast_to_instance()?;
 
                     // Gotta check the fields still; must behave identically to a
                     // OP_GET_PROPERTY + OP_CALL
-                    let lookup = receiver_ptr.borrow().lookup(&method_name);
-                    drop(receiver_ptr); // drop early to appease the BC
-
-                    match lookup {
+                    match receiver_ptr.borrow().lookup(&method_name) {
                         PropertyLookup::Field(value) => {
                             self.stack.set_back(arg_count, value)?;
                             self.call(arg_count)?;
@@ -518,32 +521,20 @@ impl VM {
                     };
                 }
                 OpCode::Inherit => {
-                    let superclass_ptr = match self.stack.peek(1)? {
-                        Value::Class(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotAClass),
-                    };
-
-                    let mut class_ptr = match self.stack.peek(0)? {
-                        Value::Class(ptr) => ptr.clone(),
-                        _ => return Err(RuntimeError::NotAClass),
-                    };
+                    let superclass_ptr = self.stack.peek(1)?.cast_to_class()?;
+                    let mut class_ptr = self.stack.peek(0)?.cast_to_class()?;
 
                     let methods = superclass_ptr.borrow().methods.clone();
                     class_ptr.borrow_mut().methods = methods;
                 }
                 OpCode::GetSuper => {
                     let method_name = self.read_next_idx_as_string();
-                    let method_ptr = match self.stack.peek(0)? {
-                        Value::Class(ptr) => match ptr.borrow().methods.get(&method_name) {
-                            Some(method_ptr) => method_ptr.clone(),
-                            None => return Err(RuntimeError::UndefinedProperty),
-                        },
-                        _ => return Err(RuntimeError::NotAClass),
-                    };
+                    let class_ptr = self.stack.peek(0)?.cast_to_class()?;
+                    let instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
 
-                    let instance_ptr = match self.stack.peek(1)? {
-                        Value::Instance(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotAnInstance),
+                    let method_ptr = match class_ptr.borrow().methods.get(&method_name) {
+                        Some(method_ptr) => method_ptr.clone(),
+                        None => return Err(RuntimeError::UndefinedProperty),
                     };
 
                     let value = self
@@ -559,10 +550,7 @@ impl VM {
                     let method_name = self.read_next_idx_as_string();
                     let arg_count: usize = self.read_next_u8().into();
 
-                    let superclass_ptr = match self.stack.pop()? {
-                        Value::Class(ptr) => ptr,
-                        _ => return Err(RuntimeError::NotAClass),
-                    };
+                    let superclass_ptr = self.stack.peek(0)?.cast_to_class()?;
 
                     // No need to check the fields, this must be a method. The stack is
                     // already set up exactly how we want it.
@@ -570,6 +558,8 @@ impl VM {
                         Some(method) => self.call_closure(method.clone(), arg_count)?,
                         None => return Err(RuntimeError::UndefinedProperty),
                     };
+
+                    self.stack.pop()?;
                 }
                 // Other
                 OpCode::Call => {

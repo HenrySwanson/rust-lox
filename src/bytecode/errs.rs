@@ -24,6 +24,7 @@ pub enum RuntimeError {
     BadUpvalue,
     NotAClass,
     NotAnInstance,
+    NotAClosure,
     UndefinedProperty,
     ArgumentsToDefaultInitializer,
 }
