@@ -544,7 +544,7 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn compile_call(&mut self, callee: &ast::Expr, args: &Vec<ast::Expr>) -> CompilerResult<()> {
+    fn compile_call(&mut self, callee: &ast::Expr, args: &[ast::Expr]) -> CompilerResult<()> {
         let num_args = u8::try_from(args.len()).expect("Too many arguments in AST");
 
         // Special cases: If we're calling a method on an instance, we can emit an OP_INVOKE,

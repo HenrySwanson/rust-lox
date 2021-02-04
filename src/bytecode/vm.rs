@@ -10,7 +10,8 @@ use super::native::NativeFunction;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{
-    LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueRef, Value, UpvalueData
+    LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,
+    Value,
 };
 
 const GC_PERIOD: u32 = 1000;
@@ -20,7 +21,7 @@ struct CallFrame {
     base_ptr: usize,
     name: InternedString,
     chunk: Rc<Chunk>,
-    upvalues: Rc<Vec<UpvalueRef>>,
+    upvalues: Rc<[UpvalueRef]>,
 }
 
 // like a vector but guarded by RuntimeResults everywhere
@@ -110,7 +111,7 @@ impl<T> SafeStack<T> {
             .ok_or(RuntimeError::InvalidStackIndex)
     }
 
-    fn push(&mut self, item: T) -> () {
+    fn push(&mut self, item: T) {
         self.stack.push(item)
     }
 
@@ -123,15 +124,16 @@ impl<T> SafeStack<T> {
             Err(RuntimeError::InvalidStackIndex)
         } else {
             let idx = self.len() - depth;
-            Ok(self.truncate(idx))
+            self.truncate(idx);
+            Ok(())
         }
     }
 
-    fn truncate(&mut self, idx: usize) -> () {
+    fn truncate(&mut self, idx: usize) {
         self.stack.truncate(idx)
     }
 
-    fn clear(&mut self) -> () {
+    fn clear(&mut self) {
         self.stack.clear()
     }
 
@@ -155,7 +157,7 @@ impl ObjectHeap {
         name: InternedString,
         arity: usize,
         chunk: Rc<Chunk>,
-        upvalues: Rc<Vec<UpvalueRef>>,
+        upvalues: Rc<[UpvalueRef]>,
     ) -> Value {
         let closure_obj = LoxClosure {
             name,
@@ -236,7 +238,7 @@ impl VM {
         let main_name = self.intern_string("<main>");
         let main_fn =
             self.object_heap
-                .insert_new_closure(main_name, 0, Rc::new(main_chunk), Rc::new(vec![]));
+                .insert_new_closure(main_name, 0, Rc::new(main_chunk), Rc::from([]));
         self.stack.push(main_fn);
 
         // Call main to start the program
@@ -431,7 +433,7 @@ impl VM {
                         name,
                         arity,
                         chunk.clone(),
-                        Rc::new(upvalues),
+                        Rc::from(upvalues),
                     );
                     self.stack.push(closure);
                 }
@@ -609,7 +611,7 @@ impl VM {
         arg_count: usize,
         name: InternedString,
         chunk: Rc<Chunk>,
-        upvalues: Rc<Vec<UpvalueRef>>,
+        upvalues: Rc<[UpvalueRef]>,
     ) {
         let new_frame = CallFrame {
             ip: 0,
@@ -768,8 +770,7 @@ impl VM {
         match self
             .open_upvalues
             .iter()
-            .filter(|u| index_match(u, stack_idx))
-            .next()
+            .find(|u| index_match(u, stack_idx))
         {
             // There's a pre-existing upvalue we should grab.
             Some(upvalue) => upvalue.clone(),
@@ -785,7 +786,9 @@ impl VM {
     fn close_upvalues(&mut self, stack_idx: usize) -> RuntimeResult<()> {
         // Closes all upvalues corresponding to stack slots at or above the given index
         for upvalue in self.open_upvalues.iter() {
-            let idx = upvalue.get_open_idx().expect("open_upvalues contains closed upvalue!");
+            let idx = upvalue
+                .get_open_idx()
+                .expect("open_upvalues contains closed upvalue!");
             if idx >= stack_idx {
                 let value = self.stack.get(idx)?.clone();
                 upvalue.close_over_value(value);

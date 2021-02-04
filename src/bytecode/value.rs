@@ -25,7 +25,7 @@ pub struct LoxClosure {
     pub name: InternedString,
     pub arity: usize,
     pub chunk: Rc<Chunk>,
-    pub upvalues: Rc<Vec<UpvalueRef>>,
+    pub upvalues: Rc<[UpvalueRef]>,
 }
 
 pub struct LoxClass {
@@ -66,10 +66,7 @@ pub enum PropertyLookup {
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
-        match self {
-            Value::Nil | Value::Boolean(false) => false,
-            _ => true,
-        }
+        !matches!(self, Value::Nil | Value::Boolean(false))
     }
 
     // TODO rename
@@ -186,7 +183,7 @@ impl LoxInstance {
             return PropertyLookup::Method(method_ptr.clone());
         }
 
-        return PropertyLookup::NotFound;
+        PropertyLookup::NotFound
     }
 }
 
