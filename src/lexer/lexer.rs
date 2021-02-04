@@ -206,3 +206,107 @@ impl<'src> Iterator for LexerIterator<'src> {
         self.lexer.scan_token()
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::{Lexer, Span, SpannedToken, Token};
+    use crate::common::span::CodePosition;
+
+    fn lex(source: &str) -> (Vec<SpannedToken>, Vec<String>) {
+        let mut tokens = vec![];
+        let mut errors = vec![];
+
+        for r in Lexer::new(source).iter() {
+            match r {
+                Ok(token) => tokens.push(token),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        (tokens, errors)
+    }
+
+    #[test]
+    fn test_simple_characters() {
+        let (tokens, _) = lex("() {} + - * / .,;");
+        assert_eq!(tokens[0].token, Token::LeftParen);
+        assert_eq!(tokens[1].token, Token::RightParen);
+        assert_eq!(tokens[2].token, Token::LeftBrace);
+        assert_eq!(tokens[3].token, Token::RightBrace);
+        assert_eq!(tokens[4].token, Token::Plus);
+        assert_eq!(tokens[5].token, Token::Minus);
+        assert_eq!(tokens[6].token, Token::Asterisk);
+        assert_eq!(tokens[7].token, Token::Slash);
+        assert_eq!(tokens[8].token, Token::Dot);
+        assert_eq!(tokens[9].token, Token::Comma);
+        assert_eq!(tokens[10].token, Token::Semicolon);
+        assert_eq!(tokens[11].token, Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_joined_characters() {
+        let (tokens, _) = lex("> >= < <= = == != !");
+        assert_eq!(tokens[0].token, Token::RightAngle);
+        assert_eq!(tokens[1].token, Token::RightAngleEq);
+        assert_eq!(tokens[2].token, Token::LeftAngle);
+        assert_eq!(tokens[3].token, Token::LeftAngleEq);
+        assert_eq!(tokens[4].token, Token::Equals);
+        assert_eq!(tokens[5].token, Token::DoubleEq);
+        assert_eq!(tokens[6].token, Token::BangEq);
+        assert_eq!(tokens[7].token, Token::Bang);
+        assert_eq!(tokens[8].token, Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_literals() {
+        let (tokens, _) = lex("\"word\" \"hello world\" \"multi\nline\" 3 -4 104 identifier");
+        assert_eq!(tokens[0].token, Token::String("word".to_owned()));
+        assert_eq!(tokens[1].token, Token::String("hello world".to_owned()));
+        assert_eq!(tokens[2].token, Token::String("multi\nline".to_owned()));
+        assert_eq!(tokens[3].token, Token::Number(3));
+        assert_eq!(tokens[4].token, Token::Minus);
+        assert_eq!(tokens[5].token, Token::Number(4));
+        assert_eq!(tokens[6].token, Token::Number(104));
+        assert_eq!(tokens[7].token, Token::Identifier("identifier".to_owned()));
+        assert_eq!(tokens[8].token, Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_keywords() {
+        let (tokens, _) = lex("and class else nonkw return printandmorechars retur");
+        assert_eq!(tokens[0].token, Token::And);
+        assert_eq!(tokens[1].token, Token::Class);
+        assert_eq!(tokens[2].token, Token::Else);
+        assert_eq!(tokens[3].token, Token::Identifier("nonkw".to_owned()));
+        assert_eq!(tokens[4].token, Token::Return);
+        assert_eq!(
+            tokens[5].token,
+            Token::Identifier("printandmorechars".to_owned())
+        );
+        assert_eq!(tokens[6].token, Token::Identifier("retur".to_owned()));
+        assert_eq!(tokens[7].token, Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_unterminated_str() {
+        let (tokens, errors) = lex("\"a string\" \"incomplete");
+        assert_eq!(tokens[0].token, Token::String("a string".to_owned()));
+        assert_eq!(tokens[1].token, Token::EndOfFile);
+
+        assert_eq!(errors, vec!["1:12: Unterminated string"]);
+    }
+
+    #[test]
+    fn test_malformed_number() {
+        let (tokens, errors) = lex("3 999999999999999999999999999999999999999 1");
+        assert_eq!(tokens[0].token, Token::Number(3));
+        assert_eq!(tokens[1].token, Token::Number(1));
+        assert_eq!(tokens[2].token, Token::EndOfFile);
+
+        assert_eq!(
+            errors,
+            vec!["1:3: Unparsable integer `999999999999999999999999999999999999999`"]
+        );
+    }
+}

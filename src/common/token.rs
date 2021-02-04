@@ -52,7 +52,7 @@ pub enum Token {
     EndOfFile,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
