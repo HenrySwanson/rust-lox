@@ -25,7 +25,7 @@ pub struct LoxClosure {
     pub name: InternedString,
     pub arity: usize,
     pub chunk: Rc<Chunk>,
-    pub upvalues: Rc<Vec<LiveUpvalue>>,
+    pub upvalues: Rc<Vec<UpvalueRef>>,
 }
 
 pub struct LoxClass {
@@ -45,12 +45,15 @@ pub struct LoxBoundMethod {
 
 // change names around
 #[derive(Clone)]
-pub struct LiveUpvalue {
-    location: Rc<RefCell<UpvalueType>>,
+pub struct UpvalueRef {
+    data: Rc<RefCell<UpvalueData>>,
 }
 
+// This holds the actual value of an upvalue. If several functions capture
+// the same variable, they'll each have UpvalueRefs that point to the same
+// UpvalueOwner.
 #[derive(Clone)]
-pub enum UpvalueType {
+pub enum UpvalueData {
     Open(usize),   // lives on the stack
     Closed(Value), // was popped off the stack, owned by this upvalue
 }
@@ -187,50 +190,39 @@ impl LoxInstance {
     }
 }
 
-impl LiveUpvalue {
-    pub fn new(idx: usize) -> Self {
-        LiveUpvalue {
-            location: Rc::new(RefCell::new(UpvalueType::Open(idx))),
+impl UpvalueRef {
+    pub fn new_open(idx: usize) -> Self {
+        UpvalueRef {
+            data: Rc::new(RefCell::new(UpvalueData::Open(idx))),
         }
     }
 
-    pub fn close(&self, value: Value) {
-        self.location.replace(UpvalueType::Closed(value));
+    pub fn borrow(&self) -> std::cell::Ref<UpvalueData> {
+        self.data.borrow()
     }
 
-    pub fn get_if_closed(&self) -> Result<Value, usize> {
-        // Returns None if the fetch succeeded (i.e. this was a closed upvalue),
-        // otherwise, returns the stack index to read from.
-        match &*self.location.borrow() {
-            UpvalueType::Open(idx) => Err(*idx),
-            UpvalueType::Closed(value) => Ok(value.clone()),
-        }
+    pub fn borrow_mut(&mut self) -> std::cell::RefMut<UpvalueData> {
+        self.data.borrow_mut()
     }
 
-    pub fn set_if_closed(&self, value: &Value) -> Result<(), usize> {
-        // You'd think this would be a &mut self, but if we do that, then
-        // the Rc<Vec< >> can't set anything :\
-        // Same motivation as .close() really.
-        match &mut *self.location.borrow_mut() {
-            UpvalueType::Open(idx) => Err(*idx),
-            UpvalueType::Closed(v) => {
-                *v = value.clone();
-                Ok(())
-            }
+    pub fn close_over_value(&self, value: Value) {
+        if let UpvalueData::Closed(_) = &*self.data.borrow() {
+            panic!("Attempted to close over closed upvalue!");
         }
+        self.data.replace(UpvalueData::Closed(value));
     }
 
     pub fn get_open_idx(&self) -> Option<usize> {
-        match &*self.location.borrow() {
-            UpvalueType::Open(idx) => Some(*idx),
-            UpvalueType::Closed(_) => None,
+        match &*self.data.borrow() {
+            UpvalueData::Open(idx) => Some(*idx),
+            UpvalueData::Closed(_) => None,
         }
     }
 
     pub fn mark_internals(&self) {
-        match &*self.location.borrow() {
-            UpvalueType::Open(_) => {}
-            UpvalueType::Closed(value) => value.mark_internals(),
+        match &*self.data.borrow() {
+            UpvalueData::Open(_) => {} // nothing to do; the stack will mark it
+            UpvalueData::Closed(value) => value.mark_internals(),
         }
     }
 }

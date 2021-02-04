@@ -1,0 +1,22 @@
+var get = nil;
+var set = nil;
+
+fun make_pair() {
+	var state = 0;
+
+	fun get_() {
+		return state;
+	}
+
+	fun set_(x) {
+		state = x;
+	}
+
+	get = get_;
+	set = set_;
+}
+
+make_pair();
+print get();
+set(4);
+print get();

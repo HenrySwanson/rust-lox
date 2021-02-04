@@ -5,6 +5,11 @@ use std::rc::Rc;
 use super::opcode::OpCode;
 use super::string_interning::InternedString;
 
+// Upvalues come in two types, and we record which one by writing an
+// an additional byte.
+pub const UPVALUE_KIND_RECURSIVE: u8 = 0;
+pub const UPVALUE_KIND_IMMEDIATE: u8 = 1;
+
 pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
 // Chunk constants are somewhat different from runtime values -- there's

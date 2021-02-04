@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::chunk::{Chunk, ChunkConstant};
-use super::compiler::Upvalue as UpvalueDef;
+use super::chunk::{UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
@@ -10,7 +10,7 @@ use super::native::NativeFunction;
 use super::opcode::OpCode;
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{
-    LiveUpvalue, LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, Value,
+    LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueRef, Value, UpvalueData
 };
 
 const GC_PERIOD: u32 = 1000;
@@ -20,7 +20,7 @@ struct CallFrame {
     base_ptr: usize,
     name: InternedString,
     chunk: Rc<Chunk>,
-    upvalues: Rc<Vec<LiveUpvalue>>,
+    upvalues: Rc<Vec<UpvalueRef>>,
 }
 
 // like a vector but guarded by RuntimeResults everywhere
@@ -39,7 +39,7 @@ pub struct VM {
     // Invocation data
     stack: SafeStack<Value>,
     call_stack: Vec<CallFrame>,
-    open_upvalues: Vec<LiveUpvalue>,
+    open_upvalues: Vec<UpvalueRef>,
 
     // Persistent data
     string_table: StringInterner,
@@ -132,7 +132,7 @@ impl ObjectHeap {
         name: InternedString,
         arity: usize,
         chunk: Rc<Chunk>,
-        upvalues: Rc<Vec<LiveUpvalue>>,
+        upvalues: Rc<Vec<UpvalueRef>>,
     ) -> Value {
         let closure_obj = LoxClosure {
             name,
@@ -382,26 +382,26 @@ impl VM {
                     // Read the upvalues
                     let mut upvalues = Vec::with_capacity(upvalue_count);
                     for _ in 0..upvalue_count {
-                        let upvalue = match self
-                            .try_read_next_upvalue()
-                            .map_err(|_| RuntimeError::BadUpvalue)?
-                        {
-                            UpvalueDef::Immediate(idx) => {
+                        let upvalue_kind = self.read_next_u8();
+                        let upvalue_idx = self.read_next_u8();
+                        let upvalue_ref = match upvalue_kind {
+                            UPVALUE_KIND_IMMEDIATE => {
                                 // Immediate means the upvalue is a local of the parent.
-                                // But we are (right now) in the frame of this closure's parent.
-                                // Remember that idx is relative to the parent's frame.
-                                let upvalue =
-                                    LiveUpvalue::new(self.frame().base_ptr + idx as usize);
-                                // Stash a copy in our open upvalue list
-                                self.open_upvalues.push(upvalue.clone());
-                                upvalue
+                                // But we are (right now) in the frame of this closure's parent,
+                                // so this upvalue is definitely still on the stack.
+                                let stack_idx = self.frame().base_ptr + upvalue_idx as usize;
+                                self.make_open_upvalue(stack_idx)
                             }
-                            UpvalueDef::Recursive(idx) => {
-                                // Otherwise, it's one of our upvalues
-                                self.frame().upvalues[idx as usize].clone()
+                            UPVALUE_KIND_RECURSIVE => {
+                                // Recursive means the upvalue is a local of grandparent or
+                                // higher. In other words, it's an upvalue of the parent, and
+                                // the index is into the parent upvalues. Just grab it from
+                                // our upvalue list and clone it.
+                                self.frame().upvalues[upvalue_idx as usize].clone()
                             }
+                            _ => return Err(RuntimeError::BadUpvalue),
                         };
-                        upvalues.push(upvalue);
+                        upvalues.push(upvalue_ref);
                     }
 
                     let closure = self.object_heap.insert_new_closure(
@@ -414,24 +414,22 @@ impl VM {
                 }
                 OpCode::GetUpvalue => {
                     let idx = self.read_next_u8() as usize;
-                    let value = match self.frame().upvalues[idx].get_if_closed() {
-                        Ok(v) => v,
-                        Err(idx) => self.stack.get(idx)?.clone(),
+                    let value = match &*self.frame().upvalues[idx].borrow() {
+                        UpvalueData::Open(idx) => self.stack.get(*idx)?.clone(),
+                        UpvalueData::Closed(v) => v.clone(),
                     };
 
                     self.stack.push(value);
                 }
                 OpCode::SetUpvalue => {
                     let idx = self.read_next_u8() as usize;
-                    let value = self.stack.peek(0)?;
+                    let value = self.stack.peek(0)?.clone();
 
-                    match self.frame().upvalues[idx].set_if_closed(value) {
-                        Ok(()) => {}
-                        Err(idx) => {
-                            let value = value.clone();
-                            self.stack.set(idx, value)?
-                        }
-                    }
+                    let mut upvalue = self.frame().upvalues[idx].clone();
+                    match &mut *upvalue.borrow_mut() {
+                        UpvalueData::Open(idx) => self.stack.set(*idx, value)?,
+                        UpvalueData::Closed(slot) => *slot = value,
+                    };
                 }
                 OpCode::CloseUpvalue => {
                     self.close_upvalues(self.stack.len() - 1)?; // just the topmost element
@@ -621,7 +619,7 @@ impl VM {
         arg_count: usize,
         name: InternedString,
         chunk: Rc<Chunk>,
-        upvalues: Rc<Vec<LiveUpvalue>>,
+        upvalues: Rc<Vec<UpvalueRef>>,
     ) {
         let new_frame = CallFrame {
             ip: 0,
@@ -667,15 +665,6 @@ impl VM {
         let result = frame.chunk.try_read_op(frame.ip);
         frame.ip += 1;
         result
-    }
-
-    fn try_read_next_upvalue(&mut self) -> Result<UpvalueDef, u8> {
-        let kind = self.read_next_u8();
-        match kind {
-            1 => Ok(UpvalueDef::Immediate(self.read_next_u8())),
-            0 => Ok(UpvalueDef::Recursive(self.read_next_u8())),
-            _ => Err(kind),
-        }
     }
 
     fn read_next_idx_as_constant(&mut self) -> ChunkConstant {
@@ -771,15 +760,45 @@ impl VM {
         Ok(())
     }
 
+    fn make_open_upvalue(&mut self, stack_idx: usize) -> UpvalueRef {
+        // Returns an upvalue pointing to the given stack slot.
+
+        // Because UpvalueData between siblings need to be shared, we first
+        // search for an existing open UpvalueRef, and return that if possible.
+        // (Parent and child also need to share upvalues, but because the child
+        // simply clones the UpvalueRef from the parent's array, we get sharing for
+        // free).
+        fn index_match(upvalue: &UpvalueRef, stack_idx: usize) -> bool {
+            stack_idx
+                == upvalue
+                    .get_open_idx()
+                    .expect("open_upvalues contains closed upvalue!")
+        }
+
+        match self
+            .open_upvalues
+            .iter()
+            .filter(|u| index_match(u, stack_idx))
+            .next()
+        {
+            // There's a pre-existing upvalue we should grab.
+            Some(upvalue) => upvalue.clone(),
+            // No matches; make a new one ourselves.
+            None => {
+                let upvalue = UpvalueRef::new_open(stack_idx);
+                self.open_upvalues.push(upvalue.clone());
+                upvalue
+            }
+        }
+    }
+
     fn close_upvalues(&mut self, stack_idx: usize) -> RuntimeResult<()> {
         // Closes all upvalues corresponding to stack slots at or above the given index
         for upvalue in self.open_upvalues.iter() {
-            match upvalue.get_open_idx() {
-                Some(slot) if slot >= stack_idx => {
-                    let value = self.stack.get(slot)?.clone();
-                    upvalue.close(value);
-                }
-                _ => {}
+            let idx = upvalue.get_open_idx().expect("open_upvalues contains closed upvalue!");
+            if idx >= stack_idx {
+                let value = self.stack.get(idx)?.clone();
+                upvalue.close_over_value(value);
             }
         }
 

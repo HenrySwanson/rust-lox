@@ -5,6 +5,7 @@ use crate::common::ast;
 use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
+use super::chunk::{UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
 use super::errs::{CompilerError, CompilerResult};
 use super::opcode::OpCode;
 use super::string_interning::StringInterner;
@@ -19,6 +20,8 @@ type UpvalueIdx = u8;
 const THIS_STR: &str = "this";
 const SUPER_STR: &str = "super";
 
+// Describes the information of a local variable (a variable declared in
+// the current context).
 struct Local {
     name: String,
     scope_depth: u32,
@@ -26,16 +29,18 @@ struct Local {
     captured: bool,
 }
 
-// TODO i feel like this shouldn't be exposed, but it's part of the chunk
-// data, so I guess it's unavoidable :\
+// Describes the information of an upvalue (a variable declared in an
+// enclosing scope.)
 #[derive(Clone, PartialEq, Eq)]
-pub enum Upvalue {
+enum Upvalue {
     // A local defined in the immediately enclosing scope
     Immediate(LocalIdx),
-    // An upvalue belonging to the immediately enclosing scope
+    // A local defined in some higher scope, i.e., an upvalue in
+    // the immediately enclosing scope
     Recursive(UpvalueIdx),
 }
 
+// A return type describing how to access a resolved variable name
 enum VariableLocator {
     Local(LocalIdx),
     Upvalue(UpvalueIdx),
@@ -381,8 +386,8 @@ impl<'strtable> Compiler<'strtable> {
         // Now encode all the upvalues that this closure should have
         for upvalue in ctx.upvalues.iter().cloned() {
             let bytes = match upvalue {
-                Upvalue::Immediate(idx) => [1, idx],
-                Upvalue::Recursive(idx) => [0, idx],
+                Upvalue::Immediate(idx) => [UPVALUE_KIND_IMMEDIATE, idx],
+                Upvalue::Recursive(idx) => [UPVALUE_KIND_RECURSIVE, idx],
             };
             self.current_chunk().write_u8(bytes[0], line_no);
             self.current_chunk().write_u8(bytes[1], line_no);
