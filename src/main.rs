@@ -1,6 +1,5 @@
 use crate::bytecode::{Compiler, VM};
 use crate::common::ast;
-use crate::lexer::Lexer;
 use crate::parser::{Parser, Resolver};
 use crate::treewalk::Interpreter;
 
@@ -72,22 +71,8 @@ fn run_file(mut interpreter: Box<dyn Runnable>, filename: &str) {
 }
 
 fn run(interpreter: &mut dyn Runnable, source: &str) -> RunResult {
-    // Lex the string
-    let lexer = Lexer::new(source);
-    let tokens: Vec<_> = lexer.iter().collect();
-
-    // Print the tokens
-    // for t in tokens.iter() {
-    //     println!("{:?}", t.token);
-    // }
-
-    let tokens: Vec<_> = match tokens.into_iter().collect() {
-        Ok(tokens) => tokens,
-        Err(e) => return Err(e),
-    };
-
-    // Parse the tokens
-    let parser = Parser::new(tokens.into_iter());
+    // Parse the input
+    let parser = Parser::new(source);
     let statements: Vec<_> = parser.parse_all();
 
     // Print the AST

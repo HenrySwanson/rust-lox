@@ -49,6 +49,7 @@ pub enum Token {
     While,
 
     // Miscellanous
+    Error(String),
     EndOfFile,
 }
 
@@ -56,10 +57,4 @@ pub enum Token {
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
-}
-
-impl SpannedToken {
-    pub fn new(token: Token, span: Span) -> Self {
-        SpannedToken { token, span }
-    }
 }

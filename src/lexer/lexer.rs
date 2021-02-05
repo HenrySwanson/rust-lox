@@ -5,10 +5,7 @@ use crate::common::token::{SpannedToken, Token};
 pub struct Lexer<'a> {
     source: &'a str,
     cursor: Cursor<'a>,
-    seen_eof: bool,
 }
-
-pub type LexResult<T> = Result<T, String>;
 
 fn is_identifier_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
@@ -24,80 +21,80 @@ impl<'src> Lexer<'src> {
         Lexer {
             source,
             cursor: Cursor::new(source),
-            seen_eof: false,
         }
     }
 
-    /// Advances through the string, and returns the next token, or
-    /// None when the string is exhausted.
-    fn scan_token(&mut self) -> Option<LexResult<SpannedToken>> {
-        // Consume whitespace
-        self.cursor.take_while(|ch| ch.is_ascii_whitespace());
+    /// Advances through the string, and returns the next token, repeating
+    /// EOF if the string is exhausted.
+    pub fn next_token(&mut self) -> SpannedToken {
+        // This eventually terminates because we hit EOF, at which point lex_token
+        // returns Some(Token::EndOfFile).
+        loop {
+            // Consume whitespace. In theory we could do this in lex_token.
+            self.cursor.take_while(|ch| ch.is_ascii_whitespace());
 
-        // Note the start position
-        let start_pos = self.cursor.get_position();
+            // Grab the position before lexing the next token.
+            let start_pos = self.cursor.get_position();
+            let token = self.lex_token();
+            let end_pos = self.cursor.get_position();
 
-        // To avoid Some-clutter when doing the matching, let's handle the EOF
-        // case here.
-        let (byte_idx, ch) = match self.cursor.take() {
-            Some(t) => t,
-            None => {
-                if self.seen_eof {
-                    return None;
-                }
-                self.seen_eof = true;
-                let span = Span::new(start_pos, start_pos);
-                return Some(Ok(SpannedToken::new(Token::EndOfFile, span)));
+            if let Some(token) = token {
+                return SpannedToken {
+                    token,
+                    // TODO should span end at end-1? how would that work for col=1?
+                    span: Span::new(start_pos, end_pos),
+                };
             }
+        }
+    }
+
+    /// Returns the next meaningful token, or None if the next
+    /// token was trivia (just comments for now).
+    fn lex_token(&mut self) -> Option<Token> {
+        // Read the next character, if any
+        let (byte_idx, ch) = match self.cursor.take() {
+            Some(tuple) => tuple,
+            None => return Some(Token::EndOfFile),
         };
 
         // Figure out what the next token is
-        let token_result = match ch {
+        let token = match ch {
             // Single character stuff
-            '(' => Ok(Token::LeftParen),
-            ')' => Ok(Token::RightParen),
-            '{' => Ok(Token::LeftBrace),
-            '}' => Ok(Token::RightBrace),
-            '+' => Ok(Token::Plus),
-            '-' => Ok(Token::Minus),
-            '*' => Ok(Token::Asterisk),
-            '.' => Ok(Token::Dot),
-            ',' => Ok(Token::Comma),
-            ';' => Ok(Token::Semicolon),
+            '(' => Token::LeftParen,
+            ')' => Token::RightParen,
+            '{' => Token::LeftBrace,
+            '}' => Token::RightBrace,
+            '+' => Token::Plus,
+            '-' => Token::Minus,
+            '*' => Token::Asterisk,
+            '.' => Token::Dot,
+            ',' => Token::Comma,
+            ';' => Token::Semicolon,
             // Now for the trickier stuff
             '/' => {
                 if self.cursor.take_if('/') {
-                    // We got a comment, recurse to get the next token
+                    // We got a comment, return None
                     self.consume_line();
-                    return self.scan_token();
+                    return None;
                 } else {
-                    Ok(Token::Slash)
+                    Token::Slash
                 }
             }
-            '=' => Ok(self.look_for_eq_sign(Token::Equals, Token::DoubleEq)),
-            '>' => Ok(self.look_for_eq_sign(Token::RightAngle, Token::RightAngleEq)),
-            '<' => Ok(self.look_for_eq_sign(Token::LeftAngle, Token::LeftAngleEq)),
-            '!' => Ok(self.look_for_eq_sign(Token::Bang, Token::BangEq)),
+            '=' => self.look_for_eq_sign(Token::Equals, Token::DoubleEq),
+            '>' => self.look_for_eq_sign(Token::RightAngle, Token::RightAngleEq),
+            '<' => self.look_for_eq_sign(Token::LeftAngle, Token::LeftAngleEq),
+            '!' => self.look_for_eq_sign(Token::Bang, Token::BangEq),
             // Everything else
             // Strings start with "
-            '"' => self.scan_string(byte_idx),
+            '"' => self.lex_string(byte_idx),
             // Numbers start with a digit
-            _ if is_digit_char(ch) => self.scan_number(byte_idx),
+            _ if is_digit_char(ch) => self.lex_number(byte_idx),
             // This branch would match a digit, but we match digits earlier so it's okay
-            _ if is_identifier_char(ch) => self.scan_identifier_or_kw(byte_idx),
-            _ => Err(format!("Unrecognized token `{}`", ch)),
+            _ if is_identifier_char(ch) => self.lex_identifier_or_kw(byte_idx),
+            _ => Token::Error(format!("Unrecognized token `{}`", ch)),
         };
 
-        // If we got a real token, return it, otherwise bubble it up
-        match token_result {
-            Ok(token) => {
-                // TODO n-1?
-                let end_pos = self.cursor.get_position();
-                let token = SpannedToken::new(token, Span::new(start_pos, end_pos));
-                Some(Ok(token))
-            }
-            Err(e) => Some(Err(format!("{}: {}", start_pos, e))),
-        }
+        Some(token)
     }
 
     // ---- helpers ----
@@ -121,52 +118,51 @@ impl<'src> Lexer<'src> {
     /// Scans up to the next ", and returns a token representing the string consumed.
     /// `start_idx` is the index of the character we previously consumed
     /// (i.e., the first quote).
-    fn scan_string(&mut self, start_idx: usize) -> LexResult<Token> {
+    fn lex_string(&mut self, start_idx: usize) -> Token {
         // Bump start_idx up by one so that we get the first character
-        // of the string, not the quote
+        // of the string, not the quote.
         let start_idx = start_idx + 1;
 
         self.cursor.take_until(|ch| ch == '"');
 
-        let end_idx = match self.cursor.peek() {
-            None => return Err("Unterminated string".to_owned()),
-            Some((i, _)) => i,
-        };
-
-        // Now consume the closing quote
-        self.cursor.take();
-
-        let value = self.source[start_idx..end_idx].to_owned();
-        Ok(Token::String(value))
+        // Did we hit the end of the string?
+        match self.cursor.peek() {
+            Some((end_idx, '"')) => {
+                self.cursor.take(); // consume the closing quote too
+                let string = self.source[start_idx..end_idx].to_owned();
+                Token::String(string)
+            }
+            None => Token::Error("Unterminated string".to_owned()),
+            _ => unreachable!(),
+        }
     }
 
     /// Scans to the end of the number, and returns a token containing its value.
-    fn scan_number(&mut self, start_idx: usize) -> LexResult<Token> {
+    fn lex_number(&mut self, start_idx: usize) -> Token {
         self.cursor.take_while(is_digit_char);
 
         let end_idx = match self.cursor.peek() {
-            None => self.source.len(),
             Some((i, _)) => i,
+            None => self.source.len(),
         };
 
         let slice = &self.source[start_idx..end_idx];
         match slice.parse() {
-            Ok(value) => Ok(Token::Number(value)),
-            Err(_) => Err(format!("Unparsable integer `{}`", slice)),
+            Ok(value) => Token::Number(value),
+            Err(_) => Token::Error(format!("Unparsable integer `{}`", slice)),
         }
     }
 
     /// Scans up to the end of the word, and returns the token for it.
-    fn scan_identifier_or_kw(&mut self, start_idx: usize) -> LexResult<Token> {
+    fn lex_identifier_or_kw(&mut self, start_idx: usize) -> Token {
         self.cursor.take_while(is_identifier_char);
 
         let end_idx = match self.cursor.peek() {
-            None => self.source.len(),
             Some((i, _)) => i,
+            None => self.source.len(),
         };
 
-        let slice = &self.source[start_idx..end_idx];
-        let token = match slice {
+        match &self.source[start_idx..end_idx] {
             "and" => Token::And,
             "class" => Token::Class,
             "else" => Token::Else,
@@ -183,13 +179,11 @@ impl<'src> Lexer<'src> {
             "true" => Token::True,
             "var" => Token::Var,
             "while" => Token::While,
-            _ => Token::Identifier(slice.to_owned()),
-        };
-
-        Ok(token)
+            other => Token::Identifier(other.to_owned()),
+        }
     }
 
-    // I feel like it's more idiomatic to have lexer.iter()?
+    /// Returns an iterator over all non-EOF tokens.
     pub fn iter(self) -> LexerIterator<'src> {
         LexerIterator { lexer: self }
     }
@@ -200,10 +194,16 @@ pub struct LexerIterator<'src> {
 }
 
 impl<'src> Iterator for LexerIterator<'src> {
-    type Item = LexResult<SpannedToken>;
+    type Item = SpannedToken;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.lexer.scan_token()
+        let token = self.lexer.next_token();
+        
+        if token.token == Token::EndOfFile {
+            return None;
+        }
+
+        Some(token)
     }
 }
 
@@ -213,23 +213,13 @@ mod tests {
     use super::{Lexer, Span, SpannedToken, Token};
     use crate::common::span::CodePosition;
 
-    fn lex(source: &str) -> (Vec<SpannedToken>, Vec<String>) {
-        let mut tokens = vec![];
-        let mut errors = vec![];
-
-        for r in Lexer::new(source).iter() {
-            match r {
-                Ok(token) => tokens.push(token),
-                Err(err) => errors.push(err),
-            }
-        }
-
-        (tokens, errors)
+    fn lex(source: &str) -> Vec<SpannedToken> {
+        Lexer::new(source).iter().collect()
     }
 
     #[test]
     fn test_simple_characters() {
-        let (tokens, _) = lex("() {} + - * / .,;");
+        let tokens = lex("() {} + - * / .,;");
         assert_eq!(tokens[0].token, Token::LeftParen);
         assert_eq!(tokens[1].token, Token::RightParen);
         assert_eq!(tokens[2].token, Token::LeftBrace);
@@ -241,12 +231,12 @@ mod tests {
         assert_eq!(tokens[8].token, Token::Dot);
         assert_eq!(tokens[9].token, Token::Comma);
         assert_eq!(tokens[10].token, Token::Semicolon);
-        assert_eq!(tokens[11].token, Token::EndOfFile);
+        assert_eq!(tokens.len(), 11);
     }
 
     #[test]
     fn test_joined_characters() {
-        let (tokens, _) = lex("> >= < <= = == != !");
+        let tokens = lex("> >= < <= = == != !");
         assert_eq!(tokens[0].token, Token::RightAngle);
         assert_eq!(tokens[1].token, Token::RightAngleEq);
         assert_eq!(tokens[2].token, Token::LeftAngle);
@@ -255,12 +245,12 @@ mod tests {
         assert_eq!(tokens[5].token, Token::DoubleEq);
         assert_eq!(tokens[6].token, Token::BangEq);
         assert_eq!(tokens[7].token, Token::Bang);
-        assert_eq!(tokens[8].token, Token::EndOfFile);
+        assert_eq!(tokens.len(), 8);
     }
 
     #[test]
     fn test_literals() {
-        let (tokens, _) = lex("\"word\" \"hello world\" \"multi\nline\" 3 -4 104 identifier");
+        let tokens = lex("\"word\" \"hello world\" \"multi\nline\" 3 -4 104 identifier");
         assert_eq!(tokens[0].token, Token::String("word".to_owned()));
         assert_eq!(tokens[1].token, Token::String("hello world".to_owned()));
         assert_eq!(tokens[2].token, Token::String("multi\nline".to_owned()));
@@ -269,12 +259,12 @@ mod tests {
         assert_eq!(tokens[5].token, Token::Number(4));
         assert_eq!(tokens[6].token, Token::Number(104));
         assert_eq!(tokens[7].token, Token::Identifier("identifier".to_owned()));
-        assert_eq!(tokens[8].token, Token::EndOfFile);
+        assert_eq!(tokens.len(), 8);
     }
 
     #[test]
     fn test_keywords() {
-        let (tokens, _) = lex("and class else nonkw return printandmorechars retur");
+        let tokens = lex("and class else nonkw return printandmorechars retur");
         assert_eq!(tokens[0].token, Token::And);
         assert_eq!(tokens[1].token, Token::Class);
         assert_eq!(tokens[2].token, Token::Else);
@@ -285,28 +275,28 @@ mod tests {
             Token::Identifier("printandmorechars".to_owned())
         );
         assert_eq!(tokens[6].token, Token::Identifier("retur".to_owned()));
-        assert_eq!(tokens[7].token, Token::EndOfFile);
+        assert_eq!(tokens.len(), 7);
     }
 
     #[test]
     fn test_unterminated_str() {
-        let (tokens, errors) = lex("\"a string\" \"incomplete");
+        let tokens = lex("\"a string\" \"incomplete");
         assert_eq!(tokens[0].token, Token::String("a string".to_owned()));
-        assert_eq!(tokens[1].token, Token::EndOfFile);
-
-        assert_eq!(errors, vec!["1:12: Unterminated string"]);
+        assert_eq!(
+            tokens[1].token,
+            Token::Error("Unterminated string".to_owned())
+        );
+        assert_eq!(tokens.len(), 2);
     }
 
     #[test]
     fn test_malformed_number() {
-        let (tokens, errors) = lex("3 999999999999999999999999999999999999999 1");
-        assert_eq!(tokens[0].token, Token::Number(3));
-        assert_eq!(tokens[1].token, Token::Number(1));
-        assert_eq!(tokens[2].token, Token::EndOfFile);
+        let tokens = lex("3 999999999999999999999999999999999999999 1");
+        let err_msg = "Unparsable integer `999999999999999999999999999999999999999`";
 
-        assert_eq!(
-            errors,
-            vec!["1:3: Unparsable integer `999999999999999999999999999999999999999`"]
-        );
+        assert_eq!(tokens[0].token, Token::Number(3));
+        assert_eq!(tokens[1].token, Token::Error(err_msg.to_owned()));
+        assert_eq!(tokens[2].token, Token::Number(1));
+        assert_eq!(tokens.len(), 3);
     }
 }

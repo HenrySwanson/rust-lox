@@ -3,14 +3,15 @@ use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
 use crate::common::span::{CodePosition, Span};
 use crate::common::token::{SpannedToken, Token};
-use std::iter::Peekable;
+use crate::lexer::Lexer;
 
-pub struct Parser<T>
-where
-    T: Iterator<Item = SpannedToken>,
+pub struct Parser<'a>
 {
-    tokens: Peekable<T>,
-    prev_span: Span,
+    source: &'a str,
+    lexer: Lexer<'a>,
+
+    current: SpannedToken,  // first unconsumed token
+    previous: SpannedToken, // last consumed token
 }
 
 #[derive(Debug)]
@@ -24,49 +25,40 @@ pub enum Error {
 
 pub type ParseResult<T> = Result<T, Error>;
 
-impl<T> Parser<T>
-where
-    T: Iterator<Item = SpannedToken>,
+impl<'src> Parser<'src>
 {
-    pub fn new(tokens: T) -> Self {
-        Parser {
-            tokens: tokens.peekable(),
-            prev_span: Span::dummy(),
-        }
+    pub fn new(source: &'src str) -> Self {
+        let fake_token = SpannedToken {
+            token: Token::Error("<internal parser token>".to_owned()),
+            span: Span::dummy(),
+        };
+        
+        let mut parser = Parser {
+            source,
+            lexer: Lexer::new(source),
+            current: fake_token.clone(),
+            previous: fake_token,
+        };
+
+        // "Prime the pump" and return
+        parser.bump();
+        parser
     }
 
     // ---- Simple token-based operations ----
 
-    /// Returns the current token
-    fn peek_token(&mut self) -> SpannedToken {
-        match self.tokens.peek() {
-            Some(t) => t.clone(),
-            None => panic!("Went beyond EOF"),
-        }
-    }
-
-    /// Returns the current token and advances the stream
-    fn take_token(&mut self) -> SpannedToken {
-        match self.tokens.next() {
-            Some(t) => {
-                self.prev_span = t.span;
-                t
-            }
-            None => panic!("Went beyond EOF"),
-        }
-    }
-
-    /// Advances the stream, erroring if we're at EOF
+    /// Advances the stream by one token
     fn bump(&mut self) {
-        let token = self.take_token();
-        if token.token == Token::EndOfFile {
-            panic!("Bumped at EOF");
-        }
+        // No-clone trick: swap current into previous, replace current
+        std::mem::swap(&mut self.previous, &mut self.current);
+        self.current = self.lexer.next_token();
+
+        // TODO: is this where i handle error tokens?   
     }
 
     /// Checks whether or not the current token matches the given token
     fn check(&mut self, t: Token) -> bool {
-        self.peek_token().token == t
+        self.current.token == t
     }
 
     /// Checks whether or not the current token matches the given token,
@@ -82,18 +74,13 @@ where
 
     /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token) -> ParseResult<()> {
-        let token = self.peek_token();
+        self.bump();
 
-        if token.token == expected {
-            self.bump();
+        if self.previous.token == expected {
             Ok(())
         } else {
-            Err(Error::ExpectedTokenAt(expected, token.span.lo, token.token))
+            Err(Error::ExpectedTokenAt(expected, self.previous.span.lo, self.previous.token.clone()))
         }
-    }
-
-    fn current_span(&mut self) -> Span {
-        self.peek_token().span
     }
 
     // ---- parsing methods ----
@@ -111,10 +98,9 @@ where
     }
 
     fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
-        let token = self.peek_token();
-        let lo = token.span;
+        let lo = self.current.span;
 
-        match token.token {
+        match self.current.token {
             Token::Var => {
                 self.bump();
                 let name = self.parse_identifier()?;
@@ -127,14 +113,14 @@ where
 
                 Ok(mk_stmt(
                     ast::StmtKind::VariableDecl(name, expr),
-                    lo.to(self.prev_span),
+                    lo.to(self.previous.span),
                 ))
             }
             Token::Fun => {
                 let fn_data = self.parse_function_data(true)?;
                 Ok(mk_stmt(
                     ast::StmtKind::FunctionDecl(fn_data),
-                    lo.to(self.prev_span),
+                    lo.to(self.previous.span),
                 ))
             }
             Token::Class => self.parse_class_decl(),
@@ -155,7 +141,7 @@ where
     }
 
     fn parse_class_decl(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         self.eat(Token::Class)?;
         let name = self.parse_identifier()?;
@@ -176,20 +162,19 @@ where
 
         Ok(mk_stmt(
             ast::StmtKind::ClassDecl(name, superclass, methods),
-            lo.to(self.prev_span),
+            lo.to(self.previous.span),
         ))
     }
 
     fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let token = self.peek_token();
-        let lo = token.span;
+        let lo = self.current.span;
 
-        match token.token {
+        match self.current.token {
             Token::Print => {
                 self.bump();
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
-                Ok(mk_stmt(ast::StmtKind::Print(expr), lo.to(self.prev_span)))
+                Ok(mk_stmt(ast::StmtKind::Print(expr), lo.to(self.previous.span)))
             }
             Token::If => self.parse_if_else_statement(),
             Token::While => self.parse_while_statement(),
@@ -201,14 +186,14 @@ where
                 self.eat(Token::Semicolon)?;
                 Ok(mk_stmt(
                     ast::StmtKind::Expression(expr),
-                    lo.to(self.prev_span),
+                    lo.to(self.previous.span),
                 ))
             }
         }
     }
 
     fn parse_if_else_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         self.eat(Token::If)?;
         self.eat(Token::LeftParen)?;
@@ -224,12 +209,12 @@ where
 
         Ok(mk_stmt(
             ast::StmtKind::IfElse(condition, body, else_body),
-            lo.to(self.prev_span),
+            lo.to(self.previous.span),
         ))
     }
 
     fn parse_while_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         self.eat(Token::While)?;
         self.eat(Token::LeftParen)?;
@@ -240,13 +225,13 @@ where
 
         Ok(mk_stmt(
             ast::StmtKind::While(condition, Box::new(body)),
-            lo.to(self.prev_span),
+            lo.to(self.previous.span),
         ))
     }
 
     fn parse_for_statement(&mut self) -> ParseResult<ast::Stmt> {
         // TODO: this one's harder
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         self.eat(Token::For)?;
         self.eat(Token::LeftParen)?;
@@ -257,12 +242,12 @@ where
         } else if self.check(Token::Var) {
             Some(self.parse_declaration()?)
         } else {
-            let lo = self.current_span();
+            let lo = self.current.span;
             let expr = self.parse_expression()?;
             self.eat(Token::Semicolon)?;
             Some(mk_stmt(
                 ast::StmtKind::Expression(expr),
-                lo.to(self.prev_span),
+                lo.to(self.previous.span),
             ))
         };
 
@@ -299,7 +284,7 @@ where
         if let Some(initializer) = initializer {
             body = mk_stmt(
                 ast::StmtKind::Block(vec![initializer, body]),
-                lo.to(self.prev_span),
+                lo.to(self.previous.span),
             );
         }
 
@@ -307,7 +292,7 @@ where
     }
 
     fn parse_return_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         self.eat(Token::Return)?;
         let expr = if !self.check(Token::Semicolon) {
@@ -317,11 +302,11 @@ where
         };
 
         self.eat(Token::Semicolon)?;
-        Ok(mk_stmt(ast::StmtKind::Return(expr), lo.to(self.prev_span)))
+        Ok(mk_stmt(ast::StmtKind::Return(expr), lo.to(self.previous.span)))
     }
 
     fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current_span();
+        let lo = self.current.span;
 
         let mut stmts = vec![];
 
@@ -331,7 +316,7 @@ where
         }
 
         // TODO replace mk_stmt with with_span
-        Ok(mk_stmt(ast::StmtKind::Block(stmts), lo.to(self.prev_span)))
+        Ok(mk_stmt(ast::StmtKind::Block(stmts), lo.to(self.previous.span)))
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
@@ -340,17 +325,16 @@ where
     }
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
-        // We parse the first operand, taking care of prefix expressions
-        let SpannedToken { token, span } = self.peek_token();
+        let lo = self.current.span;
 
-        // Check if it's a prefix expression
-        let mut lhs = match PrefixOperator::try_from_token(&token) {
+        // We parse the first operand, which may start with a prefix expression
+        let mut lhs = match PrefixOperator::try_from_token(&self.current.token) {
             Some(op) => {
                 self.bump();
                 let expr = self.pratt_parse(op.precedence())?;
                 mk_expr(
                     ast::ExprKind::Prefix(op, Box::new(expr)),
-                    span.to(self.prev_span),
+                    lo.to(self.previous.span),
                 )
             }
             None => self.parse_primary()?,
@@ -358,10 +342,8 @@ where
 
         // Now we start consuming infix operators
         loop {
-            let token = self.peek_token().token;
-
             // Is it an infix operator?
-            if let Some(op) = InfixOperator::try_from_token(&token) {
+            if let Some(op) = InfixOperator::try_from_token(&self.current.token) {
                 // Since arithmetic and equality operators are left-associative,
                 // we should treat equal precedence as insufficient.
                 if op.precedence() <= min_precedence {
@@ -380,7 +362,7 @@ where
             }
 
             // Is it a logic operator?
-            if let Some(op) = LogicalOperator::try_from_token(&token) {
+            if let Some(op) = LogicalOperator::try_from_token(&self.current.token) {
                 // Logic operators are left-associative
                 if op.precedence() <= min_precedence {
                     break;
@@ -397,7 +379,7 @@ where
             }
 
             // Is it assignment?
-            if let Token::Equals = token {
+            if let Token::Equals = self.current.token {
                 // Assignment is right-associative, so we recurse on equal precedence
                 if Precedence::Assignment < min_precedence {
                     break;
@@ -417,14 +399,14 @@ where
                     ast::ExprKind::Get(expr, property) => {
                         ast::ExprKind::Set(expr, property, rhs_box)
                     }
-                    _ => return Err(Error::ExpectedLValue(span.lo)),
+                    _ => return Err(Error::ExpectedLValue(lo.lo)),
                 };
                 lhs = mk_expr(new_kind, new_span);
                 continue;
             }
 
             // Is it a function call?
-            if let Token::LeftParen = token {
+            if let Token::LeftParen = self.current.token {
                 // Calling is left-associative
                 if Precedence::Call < min_precedence {
                     break;
@@ -432,14 +414,14 @@ where
 
                 // Don't parse the parentheses, it'll get consumed by this function
                 let arguments = self.parse_fn_args()?;
-                let span = lhs.span.to(self.prev_span);
+                let span = lhs.span.to(self.previous.span);
 
                 lhs = mk_expr(ast::ExprKind::Call(Box::new(lhs), arguments), span);
                 continue;
             }
 
             // Is it a dot?
-            if let Token::Dot = token {
+            if let Token::Dot = self.current.token {
                 // Property access is also left-associative
                 if Precedence::Property < min_precedence {
                     break;
@@ -450,7 +432,7 @@ where
 
                 // The RHS must be an identifier
                 let rhs = self.parse_identifier()?;
-                let span = lhs.span.to(self.prev_span);
+                let span = lhs.span.to(self.previous.span);
 
                 lhs = mk_expr(ast::ExprKind::Get(Box::new(lhs), rhs), span);
                 continue;
@@ -463,18 +445,20 @@ where
     }
 
     fn parse_primary(&mut self) -> ParseResult<ast::Expr> {
-        let token = self.take_token();
-        let lo = token.span;
+        // Consume a token
+        self.bump();
 
-        let expr_kind = match token.token {
+        let lo = self.previous.span;
+
+        let expr_kind = match &self.previous.token {
             // Literals
-            Token::Number(n) => from_lit(ast::Literal::Number(n)),
+            Token::Number(n) => from_lit(ast::Literal::Number(*n)),
             Token::True => from_lit(ast::Literal::Boolean(true)),
             Token::False => from_lit(ast::Literal::Boolean(false)),
-            Token::String(s) => from_lit(ast::Literal::Str(s)),
+            Token::String(s) => from_lit(ast::Literal::Str(s.to_owned())),
             Token::Nil => from_lit(ast::Literal::Nil),
             // Other things
-            Token::Identifier(name) => ast::ExprKind::Variable(ast::VariableRef::new(name)),
+            Token::Identifier(name) => ast::ExprKind::Variable(ast::VariableRef::new(name.to_owned())),
             Token::This => {
                 let var = ast::VariableRef::new(THIS_STR.to_owned());
                 ast::ExprKind::This(var)
@@ -491,16 +475,16 @@ where
                 self.eat(Token::RightParen)?;
                 return Ok(expr);
             }
-            t => return Err(Error::ExpectedExprAt(lo.lo, t)),
+            t => return Err(Error::ExpectedExprAt(lo.lo, t.clone())),
         };
-        Ok(mk_expr(expr_kind, lo.to(self.prev_span)))
+        Ok(mk_expr(expr_kind, lo.to(self.previous.span)))
     }
 
     fn parse_identifier(&mut self) -> ParseResult<String> {
-        let token = self.take_token();
-        match token.token {
-            Token::Identifier(name) => Ok(name),
-            _ => Err(Error::ExpectedIdentifier(token.span.lo)),
+        self.bump();
+        match &self.previous.token {
+            Token::Identifier(name) => Ok(name.to_owned()),
+            _ => Err(Error::ExpectedIdentifier(self.previous.span.lo)),
         }
     }
 
@@ -523,7 +507,7 @@ where
 
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.current_span();
+            let span = self.current.span;
             return Err(Error::TooManyArgs(span.lo));
         }
 
@@ -549,7 +533,7 @@ where
 
         // lox has a maximum number of arguments it supports
         if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.current_span();
+            let span = self.current.span;
             return Err(Error::TooManyArgs(span.lo));
         }
 
@@ -573,18 +557,11 @@ fn mk_expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
 mod tests {
     use super::*;
     use crate::common::ast::Expr;
-    use crate::common::token::SpannedToken;
-    use crate::lexer::Lexer;
-
-    fn lex_source(source: &str) -> Vec<SpannedToken> {
-        let lexer = Lexer::new(source);
-        lexer.iter().map(|r| r.unwrap()).collect()
-    }
 
     #[test]
     fn expression_parsing() {
         fn parse_expression(source: &str) -> Expr {
-            let mut parser = Parser::new(lex_source(source).into_iter());
+            let mut parser = Parser::new(source);
             parser.parse_expression().unwrap()
         }
 
