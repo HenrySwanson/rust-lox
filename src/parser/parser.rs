@@ -1,12 +1,11 @@
 use crate::common::ast;
 use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
 use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
-use crate::common::span::{CodePosition, Span};
+use crate::common::span::Span;
 use crate::common::token::{SpannedToken, Token};
 use crate::lexer::Lexer;
 
-pub struct Parser<'a>
-{
+pub struct Parser<'a> {
     source: &'a str,
     lexer: Lexer<'a>,
 
@@ -16,23 +15,22 @@ pub struct Parser<'a>
 
 #[derive(Debug)]
 pub enum Error {
-    ExpectedTokenAt(Token, CodePosition, Token),
-    ExpectedExprAt(CodePosition, Token),
-    ExpectedIdentifier(CodePosition),
-    ExpectedLValue(CodePosition),
-    TooManyArgs(CodePosition),
+    ExpectedTokenAt(Token, Span, Token),
+    ExpectedExprAt(Span, Token),
+    ExpectedIdentifier(Span),
+    ExpectedLValue(Span),
+    TooManyArgs(Span),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
 
-impl<'src> Parser<'src>
-{
+impl<'src> Parser<'src> {
     pub fn new(source: &'src str) -> Self {
         let fake_token = SpannedToken {
             token: Token::Error("<internal parser token>".to_owned()),
             span: Span::dummy(),
         };
-        
+
         let mut parser = Parser {
             source,
             lexer: Lexer::new(source),
@@ -53,7 +51,7 @@ impl<'src> Parser<'src>
         std::mem::swap(&mut self.previous, &mut self.current);
         self.current = self.lexer.next_token();
 
-        // TODO: is this where i handle error tokens?   
+        // TODO: is this where i handle error tokens?
     }
 
     /// Checks whether or not the current token matches the given token
@@ -79,7 +77,11 @@ impl<'src> Parser<'src>
         if self.previous.token == expected {
             Ok(())
         } else {
-            Err(Error::ExpectedTokenAt(expected, self.previous.span.lo, self.previous.token.clone()))
+            Err(Error::ExpectedTokenAt(
+                expected,
+                self.previous.span,
+                self.previous.token.clone(),
+            ))
         }
     }
 
@@ -89,7 +91,7 @@ impl<'src> Parser<'src>
         let mut stmts = vec![];
 
         while !self.check(Token::EndOfFile) {
-            let stmt = self.parse_declaration();
+            let stmt = self.parse_spanned_declaration();
             // TODO: synchronize here
             stmts.push(stmt);
         }
@@ -97,9 +99,18 @@ impl<'src> Parser<'src>
         stmts
     }
 
-    fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
+    fn parse_spanned_declaration(&mut self) -> ParseResult<ast::Stmt> {
         let lo = self.current.span;
+        let decl = self.parse_declaration_nospan()?;
+        let hi = self.previous.span;
 
+        Ok(ast::Stmt {
+            kind: decl,
+            span: lo.to(hi),
+        })
+    }
+
+    fn parse_declaration_nospan(&mut self) -> ParseResult<ast::StmtKind> {
         match self.current.token {
             Token::Var => {
                 self.bump();
@@ -111,20 +122,14 @@ impl<'src> Parser<'src>
                 };
                 self.eat(Token::Semicolon)?;
 
-                Ok(mk_stmt(
-                    ast::StmtKind::VariableDecl(name, expr),
-                    lo.to(self.previous.span),
-                ))
+                Ok(ast::StmtKind::VariableDecl(name, expr))
             }
             Token::Fun => {
                 let fn_data = self.parse_function_data(true)?;
-                Ok(mk_stmt(
-                    ast::StmtKind::FunctionDecl(fn_data),
-                    lo.to(self.previous.span),
-                ))
+                Ok(ast::StmtKind::FunctionDecl(fn_data))
             }
             Token::Class => self.parse_class_decl(),
-            _ => self.parse_statement(),
+            _ => self.parse_statement_nospan(),
         }
     }
 
@@ -134,15 +139,19 @@ impl<'src> Parser<'src>
         }
         let name = self.parse_identifier()?;
         let params = self.parse_fn_params()?;
+
+        // TODO: this shouldn't be necessary
+        let lo = self.current.span;
         let body = self.parse_block_statement()?;
+        let hi = self.previous.span;
+
+        let body = mk_stmt(body, lo.to(hi));
 
         let fn_data = ast::FunctionDecl::new(name, params, body);
         Ok(fn_data)
     }
 
-    fn parse_class_decl(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current.span;
-
+    fn parse_class_decl(&mut self) -> ParseResult<ast::StmtKind> {
         self.eat(Token::Class)?;
         let name = self.parse_identifier()?;
 
@@ -160,21 +169,27 @@ impl<'src> Parser<'src>
             methods.push(method_data);
         }
 
-        Ok(mk_stmt(
-            ast::StmtKind::ClassDecl(name, superclass, methods),
-            lo.to(self.previous.span),
-        ))
+        Ok(ast::StmtKind::ClassDecl(name, superclass, methods))
     }
 
-    fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
+    fn parse_spanned_statement(&mut self) -> ParseResult<ast::Stmt> {
         let lo = self.current.span;
+        let stmt = self.parse_statement_nospan()?;
+        let hi = self.previous.span;
 
+        Ok(ast::Stmt {
+            kind: stmt,
+            span: lo.to(hi),
+        })
+    }
+
+    fn parse_statement_nospan(&mut self) -> ParseResult<ast::StmtKind> {
         match self.current.token {
             Token::Print => {
                 self.bump();
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
-                Ok(mk_stmt(ast::StmtKind::Print(expr), lo.to(self.previous.span)))
+                Ok(ast::StmtKind::Print(expr))
             }
             Token::If => self.parse_if_else_statement(),
             Token::While => self.parse_while_statement(),
@@ -184,53 +199,40 @@ impl<'src> Parser<'src>
             _ => {
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
-                Ok(mk_stmt(
-                    ast::StmtKind::Expression(expr),
-                    lo.to(self.previous.span),
-                ))
+                Ok(ast::StmtKind::Expression(expr))
             }
         }
     }
 
-    fn parse_if_else_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current.span;
-
+    fn parse_if_else_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.eat(Token::If)?;
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
         self.eat(Token::RightParen)?;
 
-        let body = Box::new(self.parse_statement()?);
+        let body = Box::new(self.parse_spanned_statement()?);
         let else_body = if self.try_eat(Token::Else) {
-            Some(Box::new(self.parse_statement()?))
+            Some(Box::new(self.parse_spanned_statement()?))
         } else {
             None
         };
 
-        Ok(mk_stmt(
-            ast::StmtKind::IfElse(condition, body, else_body),
-            lo.to(self.previous.span),
-        ))
+        Ok(ast::StmtKind::IfElse(condition, body, else_body))
     }
 
-    fn parse_while_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current.span;
-
+    fn parse_while_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.eat(Token::While)?;
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
         self.eat(Token::RightParen)?;
 
-        let body = self.parse_statement()?;
+        let body = self.parse_spanned_statement()?;
 
-        Ok(mk_stmt(
-            ast::StmtKind::While(condition, Box::new(body)),
-            lo.to(self.previous.span),
-        ))
+        Ok(ast::StmtKind::While(condition, Box::new(body)))
     }
 
-    fn parse_for_statement(&mut self) -> ParseResult<ast::Stmt> {
-        // TODO: this one's harder
+    fn parse_for_statement(&mut self) -> ParseResult<ast::StmtKind> {
+        // TODO: this one's very messy, can we make it less ridiculous?
         let lo = self.current.span;
 
         self.eat(Token::For)?;
@@ -240,7 +242,7 @@ impl<'src> Parser<'src>
         let initializer = if self.try_eat(Token::Semicolon) {
             None
         } else if self.check(Token::Var) {
-            Some(self.parse_declaration()?)
+            Some(self.parse_spanned_declaration()?)
         } else {
             let lo = self.current.span;
             let expr = self.parse_expression()?;
@@ -267,7 +269,7 @@ impl<'src> Parser<'src>
 
         // Now we read the body, and modify it so that it has the semantics of
         // the for-loop.
-        let mut body = self.parse_statement()?;
+        let mut body = self.parse_spanned_statement()?;
 
         // Should I use dummy spans here, or try to build reasonable approximations?
         if let Some(increment) = increment {
@@ -288,12 +290,11 @@ impl<'src> Parser<'src>
             );
         }
 
-        Ok(body)
+        // TODO lol this is dumb
+        Ok(body.kind)
     }
 
-    fn parse_return_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current.span;
-
+    fn parse_return_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.eat(Token::Return)?;
         let expr = if !self.check(Token::Semicolon) {
             Some(self.parse_expression()?)
@@ -302,34 +303,31 @@ impl<'src> Parser<'src>
         };
 
         self.eat(Token::Semicolon)?;
-        Ok(mk_stmt(ast::StmtKind::Return(expr), lo.to(self.previous.span)))
+        Ok(ast::StmtKind::Return(expr))
     }
 
-    fn parse_block_statement(&mut self) -> ParseResult<ast::Stmt> {
-        let lo = self.current.span;
-
+    fn parse_block_statement(&mut self) -> ParseResult<ast::StmtKind> {
         let mut stmts = vec![];
 
         self.eat(Token::LeftBrace)?;
         while !self.try_eat(Token::RightBrace) {
-            stmts.push(self.parse_declaration()?);
+            stmts.push(self.parse_spanned_declaration()?);
         }
 
-        // TODO replace mk_stmt with with_span
-        Ok(mk_stmt(ast::StmtKind::Block(stmts), lo.to(self.previous.span)))
+        Ok(ast::StmtKind::Block(stmts))
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
-        // We use pratt parsing to deal with expressions
+        // We use pratt parsing to deal with expressions. Because of this,
+        // we don't have a parse_expression_nospan.
         self.pratt_parse(Precedence::Lowest)
     }
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
-        let lo = self.current.span;
-
         // We parse the first operand, which may start with a prefix expression
         let mut lhs = match PrefixOperator::try_from_token(&self.current.token) {
             Some(op) => {
+                let lo = self.current.span;
                 self.bump();
                 let expr = self.pratt_parse(op.precedence())?;
                 mk_expr(
@@ -399,7 +397,7 @@ impl<'src> Parser<'src>
                     ast::ExprKind::Get(expr, property) => {
                         ast::ExprKind::Set(expr, property, rhs_box)
                     }
-                    _ => return Err(Error::ExpectedLValue(lo.lo)),
+                    _ => return Err(Error::ExpectedLValue(lhs.span)),
                 };
                 lhs = mk_expr(new_kind, new_span);
                 continue;
@@ -458,7 +456,9 @@ impl<'src> Parser<'src>
             Token::String(s) => from_lit(ast::Literal::Str(s.to_owned())),
             Token::Nil => from_lit(ast::Literal::Nil),
             // Other things
-            Token::Identifier(name) => ast::ExprKind::Variable(ast::VariableRef::new(name.to_owned())),
+            Token::Identifier(name) => {
+                ast::ExprKind::Variable(ast::VariableRef::new(name.to_owned()))
+            }
             Token::This => {
                 let var = ast::VariableRef::new(THIS_STR.to_owned());
                 ast::ExprKind::This(var)
@@ -475,7 +475,7 @@ impl<'src> Parser<'src>
                 self.eat(Token::RightParen)?;
                 return Ok(expr);
             }
-            t => return Err(Error::ExpectedExprAt(lo.lo, t.clone())),
+            t => return Err(Error::ExpectedExprAt(lo, t.clone())),
         };
         Ok(mk_expr(expr_kind, lo.to(self.previous.span)))
     }
@@ -484,60 +484,44 @@ impl<'src> Parser<'src>
         self.bump();
         match &self.previous.token {
             Token::Identifier(name) => Ok(name.to_owned()),
-            _ => Err(Error::ExpectedIdentifier(self.previous.span.lo)),
+            _ => Err(Error::ExpectedIdentifier(self.previous.span)),
         }
+    }
+
+    fn parse_comma_sep<T, F>(&mut self, elt_parser: F, max_elements: usize) -> ParseResult<Vec<T>>
+    where
+        F: Fn(&mut Parser<'src>) -> ParseResult<T>,
+    {
+        self.eat(Token::LeftParen)?;
+        let mut args = vec![];
+
+        // Check for the zero-argument case
+        if self.try_eat(Token::RightParen) {
+            return Ok(args);
+        }
+
+        // There must be at least one argument
+        args.push(elt_parser(self)?);
+
+        while !self.try_eat(Token::RightParen) {
+            self.eat(Token::Comma)?;
+            args.push(elt_parser(self)?);
+
+            // lox has a maximum number of arguments it supports
+            if args.len() >= max_elements {
+                return Err(Error::TooManyArgs(self.current.span));
+            }
+        }
+
+        Ok(args)
     }
 
     fn parse_fn_args(&mut self) -> ParseResult<Vec<ast::Expr>> {
-        self.eat(Token::LeftParen)?;
-        let mut args = vec![];
-
-        // Check for the zero-argument case
-        if self.try_eat(Token::RightParen) {
-            return Ok(args);
-        }
-
-        // There must be at least one argument
-        args.push(self.parse_expression()?);
-
-        while !self.try_eat(Token::RightParen) {
-            self.eat(Token::Comma)?;
-            args.push(self.parse_expression()?);
-        }
-
-        // lox has a maximum number of arguments it supports
-        if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.current.span;
-            return Err(Error::TooManyArgs(span.lo));
-        }
-
-        Ok(args)
+        self.parse_comma_sep(Self::parse_expression, MAX_NUMBER_ARGS)
     }
 
     fn parse_fn_params(&mut self) -> ParseResult<Vec<String>> {
-        self.eat(Token::LeftParen)?;
-        let mut args = vec![];
-
-        // Check for the zero-argument case
-        if self.try_eat(Token::RightParen) {
-            return Ok(args);
-        }
-
-        // There must be at least one argument
-        args.push(self.parse_identifier()?);
-
-        while !self.try_eat(Token::RightParen) {
-            self.eat(Token::Comma)?;
-            args.push(self.parse_identifier()?);
-        }
-
-        // lox has a maximum number of arguments it supports
-        if args.len() >= MAX_NUMBER_ARGS {
-            let span = self.current.span;
-            return Err(Error::TooManyArgs(span.lo));
-        }
-
-        Ok(args)
+        self.parse_comma_sep(Self::parse_identifier, MAX_NUMBER_ARGS)
     }
 }
 

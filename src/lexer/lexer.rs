@@ -198,7 +198,7 @@ impl<'src> Iterator for LexerIterator<'src> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let token = self.lexer.next_token();
-        
+
         if token.token == Token::EndOfFile {
             return None;
         }
