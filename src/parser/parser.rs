@@ -1,6 +1,7 @@
+use super::precedence::{PrattOperator, Precedence};
 use crate::common::ast;
 use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
-use crate::common::operator::{InfixOperator, LogicalOperator, Precedence, PrefixOperator};
+use crate::common::operator::PrefixOperator;
 use crate::common::span::Span;
 use crate::common::token::{SpannedToken, Token};
 use crate::lexer::Lexer;
@@ -325,11 +326,17 @@ impl<'src> Parser<'src> {
 
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, which may start with a prefix expression
-        let mut lhs = match PrefixOperator::try_from_token(&self.current.token) {
+        let prefix_op = match &self.current.token {
+            Token::Bang => Some(PrefixOperator::LogicalNot),
+            Token::Minus => Some(PrefixOperator::Negate),
+            _ => None,
+        };
+
+        let mut lhs = match prefix_op {
             Some(op) => {
                 let lo = self.current.span;
                 self.bump();
-                let expr = self.pratt_parse(op.precedence())?;
+                let expr = self.pratt_parse(Precedence::Unary)?;
                 mk_expr(
                     ast::ExprKind::Prefix(op, Box::new(expr)),
                     lo.to(self.previous.span),
@@ -339,104 +346,64 @@ impl<'src> Parser<'src> {
         };
 
         // Now we start consuming infix operators
-        loop {
-            // Is it an infix operator?
-            if let Some(op) = InfixOperator::try_from_token(&self.current.token) {
-                // Since arithmetic and equality operators are left-associative,
-                // we should treat equal precedence as insufficient.
-                if op.precedence() <= min_precedence {
-                    break;
-                }
-
-                // Grab the operator and rhs and fold them into the new lhs
-                self.bump();
-                let rhs = self.pratt_parse(op.precedence())?;
-                let new_span = lhs.span.to(rhs.span);
-                lhs = mk_expr(
-                    ast::ExprKind::Infix(op, Box::new(lhs), Box::new(rhs)),
-                    new_span,
-                );
-                continue;
+        while let Some(op) = PrattOperator::try_from_token(&self.current.token) {
+            // Check the precedence of this operator -- if it binds more weakly than
+            // our current precedence, then our expression is over, and we should
+            // break out so that our caller can process it.
+            if !op.exceeds(min_precedence) {
+                break;
             }
 
-            // Is it a logic operator?
-            if let Some(op) = LogicalOperator::try_from_token(&self.current.token) {
-                // Logic operators are left-associative
-                if op.precedence() <= min_precedence {
-                    break;
-                }
-
+            // Consume the operator token.
+            // (for Call, we call parse_fn_args later, we shouldn't consume the
+            // left parenthesis. This is gross though. :\ TODO: fix)
+            if op != PrattOperator::Call {
                 self.bump();
-                let rhs = self.pratt_parse(op.precedence())?;
-                let new_span = lhs.span.to(rhs.span);
-                lhs = mk_expr(
-                    ast::ExprKind::Logical(op, Box::new(lhs), Box::new(rhs)),
-                    new_span,
-                );
-                continue;
             }
 
-            // Is it assignment?
-            if let Token::Equals = self.current.token {
-                // Assignment is right-associative, so we recurse on equal precedence
-                if Precedence::Assignment < min_precedence {
-                    break;
+            // Stash some Copy variables for later
+            let precedence = op.precedence();
+            let lhs_span = lhs.span;
+
+            // Now we have to do different things depending on the operation
+            let new_lhs = match op {
+                PrattOperator::Arithequal(op) => {
+                    let rhs = self.pratt_parse(precedence)?;
+                    ast::ExprKind::Infix(op, Box::new(lhs), Box::new(rhs))
                 }
-
-                // Grab the operator and parse the RHS
-                self.bump();
-                let rhs = self.pratt_parse(Precedence::Assignment)?;
-                let new_span = lhs.span.to(rhs.span);
-                let rhs_box = Box::new(rhs);
-
-                // The LHS must be converted to the appropriate format
-                let new_kind = match lhs.kind {
-                    ast::ExprKind::Variable(var) => {
-                        ast::ExprKind::Assignment(ast::VariableRef::new(var.name), rhs_box)
+                PrattOperator::Logical(op) => {
+                    let rhs = self.pratt_parse(precedence)?;
+                    ast::ExprKind::Logical(op, Box::new(lhs), Box::new(rhs))
+                }
+                PrattOperator::Assignment => {
+                    let rhs_box = Box::new(self.pratt_parse(precedence)?);
+                    // When we consumed the LHS we thought it was an expression, but
+                    // it's actually an lvalue! So we must convert it into a different
+                    // AST node.
+                    match lhs.kind {
+                        ast::ExprKind::Variable(var) => {
+                            ast::ExprKind::Assignment(ast::VariableRef::new(var.name), rhs_box)
+                        }
+                        ast::ExprKind::Get(expr, property) => {
+                            ast::ExprKind::Set(expr, property, rhs_box)
+                        }
+                        _ => return Err(Error::ExpectedLValue(lhs.span)),
                     }
-                    ast::ExprKind::Get(expr, property) => {
-                        ast::ExprKind::Set(expr, property, rhs_box)
-                    }
-                    _ => return Err(Error::ExpectedLValue(lhs.span)),
-                };
-                lhs = mk_expr(new_kind, new_span);
-                continue;
-            }
-
-            // Is it a function call?
-            if let Token::LeftParen = self.current.token {
-                // Calling is left-associative
-                if Precedence::Call < min_precedence {
-                    break;
                 }
-
-                // Don't parse the parentheses, it'll get consumed by this function
-                let arguments = self.parse_fn_args()?;
-                let span = lhs.span.to(self.previous.span);
-
-                lhs = mk_expr(ast::ExprKind::Call(Box::new(lhs), arguments), span);
-                continue;
-            }
-
-            // Is it a dot?
-            if let Token::Dot = self.current.token {
-                // Property access is also left-associative
-                if Precedence::Property < min_precedence {
-                    break;
+                PrattOperator::Call => {
+                    // Don't parse the parentheses, it'll get consumed by this function
+                    let arguments = self.parse_fn_args()?;
+                    ast::ExprKind::Call(Box::new(lhs), arguments)
                 }
+                PrattOperator::Property => {
+                    // The RHS must be an identifier
+                    let rhs = self.parse_identifier()?;
+                    ast::ExprKind::Get(Box::new(lhs), rhs)
+                }
+            };
 
-                // Grab the operator
-                self.bump();
-
-                // The RHS must be an identifier
-                let rhs = self.parse_identifier()?;
-                let span = lhs.span.to(self.previous.span);
-
-                lhs = mk_expr(ast::ExprKind::Get(Box::new(lhs), rhs), span);
-                continue;
-            }
-
-            break;
+            // Update our current tree node
+            lhs = mk_expr(new_lhs, lhs_span.to(self.previous.span));
         }
 
         Ok(lhs)
