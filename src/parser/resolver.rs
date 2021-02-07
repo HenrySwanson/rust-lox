@@ -161,11 +161,11 @@ impl Resolver {
     fn resolve_expression(&mut self, expr: &mut ast::Expr) -> ResolveResult<()> {
         match &mut expr.kind {
             ast::ExprKind::Literal(_) => (),
-            ast::ExprKind::Infix(_, lhs, rhs) => {
+            ast::ExprKind::BinOp(_, lhs, rhs) => {
                 self.resolve_expression(lhs)?;
                 self.resolve_expression(rhs)?;
             }
-            ast::ExprKind::Prefix(_, subexpr) => self.resolve_expression(subexpr)?,
+            ast::ExprKind::UnaryOp(_, subexpr) => self.resolve_expression(subexpr)?,
             ast::ExprKind::Logical(_, lhs, rhs) => {
                 self.resolve_expression(lhs)?;
                 self.resolve_expression(rhs)?;

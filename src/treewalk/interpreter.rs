@@ -7,7 +7,6 @@ use super::object::Object;
 
 use crate::common::ast;
 use crate::common::constants::{INIT_STR, SUPER_STR, THIS_STR};
-use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use std::collections::HashMap;
 
@@ -154,8 +153,8 @@ impl Interpreter {
     fn eval_expression(&mut self, expr: &ast::Expr) -> RuntimeResult<Object> {
         match &expr.kind {
             ast::ExprKind::Literal(lit) => Ok(self.eval_literal(lit)),
-            ast::ExprKind::Infix(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
-            ast::ExprKind::Prefix(op, expr) => self.eval_prefix_operator(*op, expr),
+            ast::ExprKind::BinOp(op, lhs, rhs) => self.eval_infix_operator(*op, lhs, rhs),
+            ast::ExprKind::UnaryOp(op, expr) => self.eval_prefix_operator(*op, expr),
             ast::ExprKind::Logical(op, lhs, rhs) => self.eval_logical_operator(*op, lhs, rhs),
             ast::ExprKind::Variable(var) => self.lookup_local_var(var),
             ast::ExprKind::Assignment(var, expr) => {
@@ -202,7 +201,7 @@ impl Interpreter {
 
     fn eval_infix_operator(
         &mut self,
-        op: InfixOperator,
+        op: ast::BinaryOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
     ) -> RuntimeResult<Object> {
@@ -213,7 +212,7 @@ impl Interpreter {
 
     fn eval_prefix_operator(
         &mut self,
-        op: PrefixOperator,
+        op: ast::UnaryOperator,
         expr: &ast::Expr,
     ) -> RuntimeResult<Object> {
         let value = self.eval_expression(expr)?;
@@ -222,15 +221,15 @@ impl Interpreter {
 
     fn eval_logical_operator(
         &mut self,
-        op: LogicalOperator,
+        op: ast::LogicalOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
     ) -> RuntimeResult<Object> {
         // The short-circuiting means we can't yet evaluate the RHS.
         let lhs = self.eval_expression(lhs)?;
         match op {
-            LogicalOperator::And if !lhs.is_truthy() => Ok(lhs),
-            LogicalOperator::Or if lhs.is_truthy() => Ok(lhs),
+            ast::LogicalOperator::And if !lhs.is_truthy() => Ok(lhs),
+            ast::LogicalOperator::Or if lhs.is_truthy() => Ok(lhs),
             _ => self.eval_expression(rhs),
         }
     }

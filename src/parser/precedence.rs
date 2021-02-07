@@ -1,9 +1,9 @@
-use crate::common::operator::{InfixOperator, LogicalOperator};
+use crate::common::ast::{BinaryOperator, LogicalOperator};
 use crate::common::token::Token;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum PrattOperator {
-    Arithequal(InfixOperator),
+pub enum InfixOperator {
+    Arithequal(BinaryOperator),
     Logical(LogicalOperator),
     Assignment,
     Call,
@@ -33,38 +33,38 @@ pub enum Associativity {
     Right,
 }
 
-impl PrattOperator {
-    pub fn try_from_token(token: &Token) -> Option<PrattOperator> {
+impl InfixOperator {
+    pub fn try_from_token(token: &Token) -> Option<InfixOperator> {
         // these fns are extracted so we don't have this behemoth everywhere:
-        // `Some(PrattOperator::Arithequal(InfixOperator::XXX))`
+        // `Some(InfixOperator::Arithequal(BinaryOperator::XXX))`
         if let Some(op) = Self::try_arithequal(token) {
-            return Some(PrattOperator::Arithequal(op));
+            return Some(InfixOperator::Arithequal(op));
         }
 
         if let Some(op) = Self::try_logical(token) {
-            return Some(PrattOperator::Logical(op));
+            return Some(InfixOperator::Logical(op));
         }
 
         match token {
-            Token::Equals => Some(PrattOperator::Assignment),
-            Token::LeftParen => Some(PrattOperator::Call),
-            Token::Dot => Some(PrattOperator::Property),
+            Token::Equals => Some(InfixOperator::Assignment),
+            Token::LeftParen => Some(InfixOperator::Call),
+            Token::Dot => Some(InfixOperator::Property),
             _ => None,
         }
     }
 
-    fn try_arithequal(token: &Token) -> Option<InfixOperator> {
+    fn try_arithequal(token: &Token) -> Option<BinaryOperator> {
         let infix_op = match token {
-            Token::Plus => InfixOperator::Add,
-            Token::Minus => InfixOperator::Subtract,
-            Token::Asterisk => InfixOperator::Multiply,
-            Token::Slash => InfixOperator::Divide,
-            Token::DoubleEq => InfixOperator::EqualTo,
-            Token::BangEq => InfixOperator::NotEqualTo,
-            Token::RightAngle => InfixOperator::GreaterThan,
-            Token::RightAngleEq => InfixOperator::GreaterEq,
-            Token::LeftAngle => InfixOperator::LessThan,
-            Token::LeftAngleEq => InfixOperator::LessEq,
+            Token::Plus => BinaryOperator::Add,
+            Token::Minus => BinaryOperator::Subtract,
+            Token::Asterisk => BinaryOperator::Multiply,
+            Token::Slash => BinaryOperator::Divide,
+            Token::DoubleEq => BinaryOperator::EqualTo,
+            Token::BangEq => BinaryOperator::NotEqualTo,
+            Token::RightAngle => BinaryOperator::GreaterThan,
+            Token::RightAngleEq => BinaryOperator::GreaterEq,
+            Token::LeftAngle => BinaryOperator::LessThan,
+            Token::LeftAngleEq => BinaryOperator::LessEq,
             _ => return None,
         };
         Some(infix_op)
@@ -95,24 +95,24 @@ impl PrattOperator {
 
     pub fn precedence(&self) -> Precedence {
         match self {
-            PrattOperator::Arithequal(op) => match op {
+            InfixOperator::Arithequal(op) => match op {
                 // Arithmetic
-                InfixOperator::Add | InfixOperator::Subtract => Precedence::Addition,
-                InfixOperator::Multiply | InfixOperator::Divide => Precedence::Multiplication,
+                BinaryOperator::Add | BinaryOperator::Subtract => Precedence::Addition,
+                BinaryOperator::Multiply | BinaryOperator::Divide => Precedence::Multiplication,
                 // Comparison
-                InfixOperator::EqualTo | InfixOperator::NotEqualTo => Precedence::Equality,
-                InfixOperator::GreaterThan
-                | InfixOperator::GreaterEq
-                | InfixOperator::LessThan
-                | InfixOperator::LessEq => Precedence::Comparison,
+                BinaryOperator::EqualTo | BinaryOperator::NotEqualTo => Precedence::Equality,
+                BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterEq
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessEq => Precedence::Comparison,
             },
-            PrattOperator::Logical(op) => match op {
+            InfixOperator::Logical(op) => match op {
                 LogicalOperator::And => Precedence::LogicalAnd,
                 LogicalOperator::Or => Precedence::LogicalOr,
             },
-            PrattOperator::Assignment => Precedence::Assignment,
-            PrattOperator::Call => Precedence::Call,
-            PrattOperator::Property => Precedence::Property,
+            InfixOperator::Assignment => Precedence::Assignment,
+            InfixOperator::Call => Precedence::Call,
+            InfixOperator::Property => Precedence::Property,
         }
     }
 
@@ -156,18 +156,18 @@ mod tests {
     #[test]
     fn operators() {
         assert_eq!(
-            PrattOperator::try_from_token(&Token::Plus),
-            Some(PrattOperator::Arithequal(InfixOperator::Add))
+            InfixOperator::try_from_token(&Token::Plus),
+            Some(InfixOperator::Arithequal(BinaryOperator::Add))
         );
         assert_eq!(
-            PrattOperator::try_from_token(&Token::Minus),
-            Some(PrattOperator::Arithequal(InfixOperator::Subtract))
+            InfixOperator::try_from_token(&Token::Minus),
+            Some(InfixOperator::Arithequal(BinaryOperator::Subtract))
         );
         assert_eq!(
-            PrattOperator::try_from_token(&Token::And),
-            Some(PrattOperator::Logical(LogicalOperator::And))
+            InfixOperator::try_from_token(&Token::And),
+            Some(InfixOperator::Logical(LogicalOperator::And))
         );
 
-        assert_eq!(PrattOperator::try_from_token(&Token::Bang), None);
+        assert_eq!(InfixOperator::try_from_token(&Token::Bang), None);
     }
 }

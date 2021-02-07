@@ -2,7 +2,6 @@ use std::convert::{TryFrom, TryInto};
 use std::rc::Rc;
 
 use crate::common::ast;
-use crate::common::operator::{InfixOperator, LogicalOperator, PrefixOperator};
 
 use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
 use super::chunk::{UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
@@ -401,12 +400,16 @@ impl<'strtable> Compiler<'strtable> {
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no),
-            ast::ExprKind::Infix(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
-            ast::ExprKind::Prefix(op, expr) => self.compile_prefix(*op, expr)?,
+            ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
+            ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
             ast::ExprKind::Variable(var) => self.get_variable(&var.name, line_no)?,
             ast::ExprKind::Assignment(var, expr) => self.set_variable(&var.name, expr, line_no)?,
-            ast::ExprKind::Logical(LogicalOperator::And, lhs, rhs) => self.compile_and(lhs, rhs)?,
-            ast::ExprKind::Logical(LogicalOperator::Or, lhs, rhs) => self.compile_or(lhs, rhs)?,
+            ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
+                self.compile_and(lhs, rhs)?
+            }
+            ast::ExprKind::Logical(ast::LogicalOperator::Or, lhs, rhs) => {
+                self.compile_or(lhs, rhs)?
+            }
             ast::ExprKind::Call(callee, args) => self.compile_call(callee, args)?,
             ast::ExprKind::Get(expr, name) => {
                 let idx = self.add_string_constant(name);
@@ -463,7 +466,7 @@ impl<'strtable> Compiler<'strtable> {
 
     fn compile_infix(
         &mut self,
-        op: InfixOperator,
+        op: ast::BinaryOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
     ) -> CompilerResult<()> {
@@ -474,22 +477,22 @@ impl<'strtable> Compiler<'strtable> {
 
         let chunk = self.current_chunk();
         match op {
-            InfixOperator::Add => chunk.write_op(OpCode::Add, line_no),
-            InfixOperator::Subtract => chunk.write_op(OpCode::Subtract, line_no),
-            InfixOperator::Multiply => chunk.write_op(OpCode::Multiply, line_no),
-            InfixOperator::Divide => chunk.write_op(OpCode::Divide, line_no),
-            InfixOperator::EqualTo => chunk.write_op(OpCode::Equal, line_no),
-            InfixOperator::NotEqualTo => {
+            ast::BinaryOperator::Add => chunk.write_op(OpCode::Add, line_no),
+            ast::BinaryOperator::Subtract => chunk.write_op(OpCode::Subtract, line_no),
+            ast::BinaryOperator::Multiply => chunk.write_op(OpCode::Multiply, line_no),
+            ast::BinaryOperator::Divide => chunk.write_op(OpCode::Divide, line_no),
+            ast::BinaryOperator::EqualTo => chunk.write_op(OpCode::Equal, line_no),
+            ast::BinaryOperator::NotEqualTo => {
                 chunk.write_op(OpCode::Equal, line_no);
                 chunk.write_op(OpCode::Not, line_no)
             }
-            InfixOperator::GreaterThan => chunk.write_op(OpCode::GreaterThan, line_no),
-            InfixOperator::GreaterEq => {
+            ast::BinaryOperator::GreaterThan => chunk.write_op(OpCode::GreaterThan, line_no),
+            ast::BinaryOperator::GreaterEq => {
                 chunk.write_op(OpCode::LessThan, line_no);
                 chunk.write_op(OpCode::Not, line_no)
             }
-            InfixOperator::LessThan => chunk.write_op(OpCode::LessThan, line_no),
-            InfixOperator::LessEq => {
+            ast::BinaryOperator::LessThan => chunk.write_op(OpCode::LessThan, line_no),
+            ast::BinaryOperator::LessEq => {
                 chunk.write_op(OpCode::GreaterThan, line_no);
                 chunk.write_op(OpCode::Not, line_no)
             }
@@ -498,11 +501,11 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn compile_prefix(&mut self, op: PrefixOperator, expr: &ast::Expr) -> CompilerResult<()> {
+    fn compile_prefix(&mut self, op: ast::UnaryOperator, expr: &ast::Expr) -> CompilerResult<()> {
         self.compile_expression(expr)?;
         let opcode = match op {
-            PrefixOperator::Negate => OpCode::Negate,
-            PrefixOperator::LogicalNot => OpCode::Not,
+            ast::UnaryOperator::Negate => OpCode::Negate,
+            ast::UnaryOperator::LogicalNot => OpCode::Not,
         };
 
         self.current_chunk().write_op(opcode, expr.span.lo.line_no);

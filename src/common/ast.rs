@@ -1,5 +1,3 @@
-use super::operator::{InfixOperator, LogicalOperator, PrefixOperator};
-
 use crate::common::span::Span;
 
 // AST Nodes
@@ -34,8 +32,8 @@ pub struct Expr {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExprKind {
     Literal(Literal),
-    Infix(InfixOperator, Box<Expr>, Box<Expr>),
-    Prefix(PrefixOperator, Box<Expr>),
+    BinOp(BinaryOperator, Box<Expr>, Box<Expr>),
+    UnaryOp(UnaryOperator, Box<Expr>),
     Logical(LogicalOperator, Box<Expr>, Box<Expr>),
     Variable(VariableRef),
     Assignment(VariableRef, Box<Expr>),
@@ -66,6 +64,32 @@ pub struct FunctionDecl {
     pub params: Vec<String>,
     pub body: Box<Stmt>,
 }
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum UnaryOperator {
+    Negate,
+    LogicalNot,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    EqualTo,
+    NotEqualTo,
+    GreaterThan,
+    GreaterEq,
+    LessThan,
+    LessEq,
+}
+
+// these are different because they short-circuit
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LogicalOperator {
+    And,
+    Or,
+}
 
 impl Stmt {
     pub fn new(kind: StmtKind, span: Span) -> Self {
@@ -91,13 +115,13 @@ impl Expr {
                 Literal::Str(s) => format!("\"{}\"", s),
                 Literal::Nil => "nil".to_owned(),
             },
-            ExprKind::Infix(op, lhs, rhs) => format!(
+            ExprKind::BinOp(op, lhs, rhs) => format!(
                 "({} {} {})",
                 op.symbol(),
                 lhs.lispy_string(),
                 rhs.lispy_string()
             ),
-            ExprKind::Prefix(op, expr) => format!("({} {})", op.symbol(), expr.lispy_string()),
+            ExprKind::UnaryOp(op, expr) => format!("({} {})", op.symbol(), expr.lispy_string()),
             ExprKind::Logical(op, lhs, rhs) => format!(
                 "({} {} {})",
                 op.symbol(),
@@ -137,6 +161,41 @@ impl FunctionDecl {
             name,
             params,
             body: Box::new(body),
+        }
+    }
+}
+
+impl UnaryOperator {
+    fn symbol(&self) -> &str {
+        match self {
+            UnaryOperator::Negate => "-",
+            UnaryOperator::LogicalNot => "!",
+        }
+    }
+}
+
+impl BinaryOperator {
+    fn symbol(&self) -> &str {
+        match self {
+            BinaryOperator::Add => "+",
+            BinaryOperator::Subtract => "-",
+            BinaryOperator::Multiply => "*",
+            BinaryOperator::Divide => "/",
+            BinaryOperator::EqualTo => "==",
+            BinaryOperator::NotEqualTo => "!=",
+            BinaryOperator::GreaterThan => ">",
+            BinaryOperator::GreaterEq => ">=",
+            BinaryOperator::LessThan => "<",
+            BinaryOperator::LessEq => "<=",
+        }
+    }
+}
+
+impl LogicalOperator {
+    fn symbol(&self) -> &str {
+        match self {
+            LogicalOperator::And => "and",
+            LogicalOperator::Or => "or",
         }
     }
 }

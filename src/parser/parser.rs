@@ -1,7 +1,6 @@
-use super::precedence::{PrattOperator, Precedence};
+use super::precedence::{InfixOperator, Precedence};
 use crate::common::ast;
 use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
-use crate::common::operator::PrefixOperator;
 use crate::common::span::Span;
 use crate::common::token::{SpannedToken, Token};
 use crate::lexer::Lexer;
@@ -327,8 +326,8 @@ impl<'src> Parser<'src> {
     fn pratt_parse(&mut self, min_precedence: Precedence) -> ParseResult<ast::Expr> {
         // We parse the first operand, which may start with a prefix expression
         let prefix_op = match &self.current.token {
-            Token::Bang => Some(PrefixOperator::LogicalNot),
-            Token::Minus => Some(PrefixOperator::Negate),
+            Token::Bang => Some(ast::UnaryOperator::LogicalNot),
+            Token::Minus => Some(ast::UnaryOperator::Negate),
             _ => None,
         };
 
@@ -338,7 +337,7 @@ impl<'src> Parser<'src> {
                 self.bump();
                 let expr = self.pratt_parse(Precedence::Unary)?;
                 mk_expr(
-                    ast::ExprKind::Prefix(op, Box::new(expr)),
+                    ast::ExprKind::UnaryOp(op, Box::new(expr)),
                     lo.to(self.previous.span),
                 )
             }
@@ -346,7 +345,7 @@ impl<'src> Parser<'src> {
         };
 
         // Now we start consuming infix operators
-        while let Some(op) = PrattOperator::try_from_token(&self.current.token) {
+        while let Some(op) = InfixOperator::try_from_token(&self.current.token) {
             // Check the precedence of this operator -- if it binds more weakly than
             // our current precedence, then our expression is over, and we should
             // break out so that our caller can process it.
@@ -357,7 +356,7 @@ impl<'src> Parser<'src> {
             // Consume the operator token.
             // (for Call, we call parse_fn_args later, we shouldn't consume the
             // left parenthesis. This is gross though. :\ TODO: fix)
-            if op != PrattOperator::Call {
+            if op != InfixOperator::Call {
                 self.bump();
             }
 
@@ -367,15 +366,15 @@ impl<'src> Parser<'src> {
 
             // Now we have to do different things depending on the operation
             let new_lhs = match op {
-                PrattOperator::Arithequal(op) => {
+                InfixOperator::Arithequal(op) => {
                     let rhs = self.pratt_parse(precedence)?;
-                    ast::ExprKind::Infix(op, Box::new(lhs), Box::new(rhs))
+                    ast::ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs))
                 }
-                PrattOperator::Logical(op) => {
+                InfixOperator::Logical(op) => {
                     let rhs = self.pratt_parse(precedence)?;
                     ast::ExprKind::Logical(op, Box::new(lhs), Box::new(rhs))
                 }
-                PrattOperator::Assignment => {
+                InfixOperator::Assignment => {
                     let rhs_box = Box::new(self.pratt_parse(precedence)?);
                     // When we consumed the LHS we thought it was an expression, but
                     // it's actually an lvalue! So we must convert it into a different
@@ -390,12 +389,12 @@ impl<'src> Parser<'src> {
                         _ => return Err(Error::ExpectedLValue(lhs.span)),
                     }
                 }
-                PrattOperator::Call => {
+                InfixOperator::Call => {
                     // Don't parse the parentheses, it'll get consumed by this function
                     let arguments = self.parse_fn_args()?;
                     ast::ExprKind::Call(Box::new(lhs), arguments)
                 }
-                PrattOperator::Property => {
+                InfixOperator::Property => {
                     // The RHS must be an identifier
                     let rhs = self.parse_identifier()?;
                     ast::ExprKind::Get(Box::new(lhs), rhs)
