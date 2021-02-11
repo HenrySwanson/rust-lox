@@ -64,7 +64,9 @@ impl Object {
             BinaryOperator::GreaterEq => {
                 numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a >= b))
             }
-            BinaryOperator::LessThan => numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a < b)),
+            BinaryOperator::LessThan => {
+                numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a < b))
+            }
             BinaryOperator::LessEq => numerical_binop(op, lhs, rhs, |a, b| Object::Boolean(a <= b)),
         }
     }

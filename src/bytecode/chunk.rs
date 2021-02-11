@@ -2,15 +2,8 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::rc::Rc;
 
-use super::opcode::OpCode;
+use super::opcode::{ConstantIdx, OpCode, RichOpcode};
 use super::string_interning::InternedString;
-
-// Upvalues come in two types, and we record which one by writing an
-// an additional byte.
-pub const UPVALUE_KIND_RECURSIVE: u8 = 0;
-pub const UPVALUE_KIND_IMMEDIATE: u8 = 1;
-
-pub type ConstantIdx = u8; // allow only 256 constants / chunk
 
 // Chunk constants are somewhat different from runtime values -- there's
 // no recursion possible, and there's never heap allocation.
@@ -188,8 +181,6 @@ impl Chunk {
             };};
         }
 
-        let mut variable_args_size: Option<usize> = None;
-
         match instruction {
             // Constants
             OpCode::Constant => print_with_constant!("OP_CONSTANT"),
@@ -238,7 +229,6 @@ impl Chunk {
                         _ => println!("???     #{}", idx),
                     };
                 }
-                variable_args_size = Some(1 + 2 * upvalue_count);
             }
             OpCode::GetUpvalue => print_two!("OP_GET_UPVALUE", self.read_u8(offset + 1)),
             OpCode::SetUpvalue => print_two!("OP_SET_UPVALUE", self.read_u8(offset + 1)),
@@ -272,9 +262,7 @@ impl Chunk {
         };
 
         // Exactly one of these should be set
-        let arg_bytes = variable_args_size.xor(instruction.arg_size_in_bytes());
-
-        // +1 for the instruction itself
-        offset + 1 + arg_bytes.expect("Ill-defined argument size")
+        let (_, new_offset) = RichOpcode::decode(&self.code, offset).unwrap();
+        new_offset
     }
 }

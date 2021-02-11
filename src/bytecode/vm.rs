@@ -2,12 +2,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::chunk::{Chunk, ChunkConstant};
-use super::chunk::{UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::native::NativeFunction;
-use super::opcode::OpCode;
+use super::opcode::{OpCode, UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{
     LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,

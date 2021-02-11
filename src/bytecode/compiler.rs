@@ -3,18 +3,13 @@ use std::rc::Rc;
 
 use crate::common::ast;
 
-use super::chunk::{Chunk, ChunkConstant, ConstantIdx};
-use super::chunk::{UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
+use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};
-use super::opcode::OpCode;
+use super::opcode::{
+    ConstantIdx, LocalIdx, OpCode, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES, UPVALUE_KIND_IMMEDIATE,
+    UPVALUE_KIND_RECURSIVE,
+};
 use super::string_interning::StringInterner;
-
-// since the GET_LOCAL instruction takes a byte
-const MAX_LOCALS: usize = 256;
-type LocalIdx = u8;
-
-const MAX_UPVALUES: usize = 256;
-type UpvalueIdx = u8;
 
 const THIS_STR: &str = "this";
 const SUPER_STR: &str = "super";
