@@ -1,8 +1,8 @@
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::fmt;
 use std::rc::Rc;
 
-use super::opcode::{ConstantIdx, OpCode, OpcodeError, RichOpcode, UpvalueAddr};
+use super::opcode::{ConstantIdx, OpcodeError, RichOpcode, UpvalueAddr};
 use super::string_interning::InternedString;
 
 // Chunk constants are somewhat different from runtime values -- there's
@@ -139,11 +139,10 @@ impl Chunk {
             print!("   | ");
         }
 
-        let val = self.code[offset];
-        let instruction = match OpCode::try_from(val) {
-            Ok(instruction) => instruction,
+        let (op, new_offset) = match RichOpcode::decode(&self.code, offset) {
+            Ok(tuple) => tuple,
             Err(_) => {
-                println!("Unknown opcode {}", val);
+                println!("Unparseable: {}", self.code[offset]);
                 return offset + 1;
             }
         };
@@ -161,44 +160,42 @@ impl Chunk {
         }
 
         macro_rules! print_with_constant {
-            ($op:expr) => {{
-                let idx = self.read_u8(offset + 1);
-                let constant = self.lookup_constant(idx);
-                print_three!($op, idx, constant);
+            ($op:expr, $idx:expr) => {{
+                let constant = self.lookup_constant($idx);
+                print_three!($op, $idx, constant);
             };};
         }
 
-        match instruction {
+        match op {
             // Constants
-            OpCode::Constant => print_with_constant!("OP_CONSTANT"),
-            OpCode::True => println!("OP_TRUE"),
-            OpCode::False => println!("OP_FALSE"),
-            OpCode::Nil => println!("OP_NIL"),
+            RichOpcode::Constant(idx) => print_with_constant!("OP_CONSTANT", idx),
+            RichOpcode::True => println!("OP_TRUE"),
+            RichOpcode::False => println!("OP_FALSE"),
+            RichOpcode::Nil => println!("OP_NIL"),
             // Arithmetic
-            OpCode::Add => println!("OP_ADD"),
-            OpCode::Subtract => println!("OP_SUBTRACT"),
-            OpCode::Multiply => println!("OP_MULTIPLY"),
-            OpCode::Divide => println!("OP_DIVIDE"),
-            OpCode::Negate => println!("OP_NEGATE"),
+            RichOpcode::Add => println!("OP_ADD"),
+            RichOpcode::Subtract => println!("OP_SUBTRACT"),
+            RichOpcode::Multiply => println!("OP_MULTIPLY"),
+            RichOpcode::Divide => println!("OP_DIVIDE"),
+            RichOpcode::Negate => println!("OP_NEGATE"),
             // Logic
-            OpCode::Not => println!("OP_NOT"),
+            RichOpcode::Not => println!("OP_NOT"),
             // Comparison
-            OpCode::Equal => println!("OP_EQUAL"),
-            OpCode::GreaterThan => println!("OP_GREATER"),
-            OpCode::LessThan => println!("OP_LESS"),
+            RichOpcode::Equal => println!("OP_EQUAL"),
+            RichOpcode::GreaterThan => println!("OP_GREATER"),
+            RichOpcode::LessThan => println!("OP_LESS"),
             // Variables
-            OpCode::DefineGlobal => print_with_constant!("OP_DEFINE_GLOBAL"),
-            OpCode::GetGlobal => print_with_constant!("OP_GET_GLOBAL"),
-            OpCode::SetGlobal => print_with_constant!("OP_SET_GLOBAL"),
-            OpCode::GetLocal => print_two!("OP_GET_LOCAL", self.read_u8(offset + 1)),
-            OpCode::SetLocal => print_two!("OP_SET_LOCAL", self.read_u8(offset + 1)),
+            RichOpcode::DefineGlobal(idx) => print_with_constant!("OP_DEFINE_GLOBAL", idx),
+            RichOpcode::GetGlobal(idx) => print_with_constant!("OP_GET_GLOBAL", idx),
+            RichOpcode::SetGlobal(idx) => print_with_constant!("OP_SET_GLOBAL", idx),
+            RichOpcode::GetLocal(idx) => print_two!("OP_GET_LOCAL", idx),
+            RichOpcode::SetLocal(idx) => print_two!("OP_SET_LOCAL", idx),
             // Jumps
-            OpCode::Jump => print_two!("OP_JUMP", self.read_u16(offset + 1)),
-            OpCode::JumpIfFalse => print_two!("OP_JUMP_IF_FALSE", self.read_u16(offset + 1)),
-            OpCode::Loop => print_two!("OP_LOOP", self.read_u16(offset + 1)),
+            RichOpcode::Jump(distance) => print_two!("OP_JUMP", distance),
+            RichOpcode::JumpIfFalse(distance) => print_two!("OP_JUMP_IF_FALSE", distance),
+            RichOpcode::Loop(distance) => print_two!("OP_LOOP", distance),
             // Closures and Upvalues
-            OpCode::MakeClosure => {
-                let idx = self.read_u8(offset + 1);
+            RichOpcode::MakeClosure(idx) => {
                 let constant = self.lookup_constant(idx);
                 let upvalue_count = match constant {
                     ChunkConstant::FnTemplate { upvalue_count, .. } => upvalue_count,
@@ -207,49 +204,41 @@ impl Chunk {
 
                 print_three!("OP_MAKE_CLOSURE", idx, constant);
                 for i in 0..upvalue_count {
-                    let kind = self.read_u8(offset + 2 + 2 * i);
-                    let idx = self.read_u8(offset + 2 + 2 * i + 1);
                     print!("{:37}: ", i);
-                    match kind {
-                        1 => println!("local   #{}", idx),
-                        0 => println!("upvalue #{}", idx),
-                        _ => println!("???     #{}", idx),
-                    };
+                    match UpvalueAddr::decode(&self.code, offset + 2 + 2 * i) {
+                        Ok(addr) => match addr {
+                            UpvalueAddr::Immediate(idx) => println!("local   #{}", idx),
+                            UpvalueAddr::Recursive(idx) => println!("upvalue #{}", idx),
+                        },
+                        Err(_) => println!("???     #{}", idx),
+                    }
                 }
             }
-            OpCode::GetUpvalue => print_two!("OP_GET_UPVALUE", self.read_u8(offset + 1)),
-            OpCode::SetUpvalue => print_two!("OP_SET_UPVALUE", self.read_u8(offset + 1)),
-            OpCode::CloseUpvalue => println!("OP_CLOSE_UPVALUE"),
+            RichOpcode::GetUpvalue(idx) => print_two!("OP_GET_UPVALUE", idx),
+            RichOpcode::SetUpvalue(idx) => print_two!("OP_SET_UPVALUE", idx),
+            RichOpcode::CloseUpvalue => println!("OP_CLOSE_UPVALUE"),
             // Classes
-            OpCode::MakeClass => print_with_constant!("OP_MAKE_CLASS"),
-            OpCode::GetProperty => print_with_constant!("OP_GET_PROPERTY"),
-            OpCode::SetProperty => print_with_constant!("OP_SET_PROPERTY"),
-            OpCode::MakeMethod => print_with_constant!("OP_MAKE_METHOD"),
-            OpCode::Invoke => {
-                let idx = self.read_u8(offset + 1);
+            RichOpcode::MakeClass(idx) => print_with_constant!("OP_MAKE_CLASS", idx),
+            RichOpcode::GetProperty(idx) => print_with_constant!("OP_GET_PROPERTY", idx),
+            RichOpcode::SetProperty(idx) => print_with_constant!("OP_SET_PROPERTY", idx),
+            RichOpcode::MakeMethod(idx) => print_with_constant!("OP_MAKE_METHOD", idx),
+            RichOpcode::Invoke(idx, argc) => {
                 let method_name = self.lookup_constant(idx);
-                let num_args = self.read_u8(offset + 2);
-
-                print_three!("OP_INVOKE", method_name, num_args);
+                print_three!("OP_INVOKE", method_name, argc);
             }
-            OpCode::Inherit => println!("OP_INHERIT"),
-            OpCode::GetSuper => print_with_constant!("OP_GET_SUPER"),
-            OpCode::SuperInvoke => {
-                let idx = self.read_u8(offset + 1);
+            RichOpcode::Inherit => println!("OP_INHERIT"),
+            RichOpcode::GetSuper(idx) => print_with_constant!("OP_GET_SUPER", idx),
+            RichOpcode::SuperInvoke(idx, argc) => {
                 let method_name = self.lookup_constant(idx);
-                let num_args = self.read_u8(offset + 2);
-
-                print_three!("OP_SUPER_INVOKE", method_name, num_args);
+                print_three!("OP_SUPER_INVOKE", method_name, argc);
             }
             // Other
-            OpCode::Call => print_two!("OP_CALL", self.read_u8(offset + 1)),
-            OpCode::Print => println!("OP_PRINT"),
-            OpCode::Pop => println!("OP_POP"),
-            OpCode::Return => println!("OP_RETURN"),
+            RichOpcode::Call(argc) => print_two!("OP_CALL", argc),
+            RichOpcode::Print => println!("OP_PRINT"),
+            RichOpcode::Pop => println!("OP_POP"),
+            RichOpcode::Return => println!("OP_RETURN"),
         };
 
-        // Exactly one of these should be set
-        let (_, new_offset) = RichOpcode::decode(&self.code, offset).unwrap();
         new_offset
     }
 }
