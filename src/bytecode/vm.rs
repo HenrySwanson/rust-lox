@@ -6,7 +6,9 @@ use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::native::NativeFunction;
-use super::opcode::{OpCode, UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE};
+use super::opcode::{
+    ConstantIdx, OpcodeError, RichOpcode, UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE,
+};
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{
     LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,
@@ -24,6 +26,7 @@ struct CallFrame {
 }
 
 // like a vector but guarded by RuntimeResults everywhere
+#[derive(Debug)]
 struct SafeStack<T> {
     stack: Vec<T>,
 }
@@ -281,15 +284,10 @@ impl VM {
                 println!();
             }
 
-            let op = match self.try_read_next_op() {
-                Ok(op) => op,
-                Err(byte) => return Err(RuntimeError::InvalidOpcode(byte)),
-            };
-
-            match op {
+            match self.try_read_next_op()? {
                 // Constants
-                OpCode::Constant => {
-                    let value = match self.read_next_idx_as_constant() {
+                RichOpcode::Constant(idx) => {
+                    let value = match self.fetch_constant(idx) {
                         ChunkConstant::Number(n) => Value::Number(n.into()),
                         ChunkConstant::String(s) => Value::String(s),
                         c => return Err(RuntimeError::UntranslatableConstant(c)),
@@ -297,14 +295,14 @@ impl VM {
 
                     self.stack.push(value);
                 }
-                OpCode::True => self.stack.push(Value::Boolean(true)),
-                OpCode::False => self.stack.push(Value::Boolean(false)),
-                OpCode::Nil => self.stack.push(Value::Nil),
+                RichOpcode::True => self.stack.push(Value::Boolean(true)),
+                RichOpcode::False => self.stack.push(Value::Boolean(false)),
+                RichOpcode::Nil => self.stack.push(Value::Nil),
                 // Arithmetic
-                OpCode::Add => self.do_add()?,
-                OpCode::Subtract => self.arithmetic_binop(|a, b| a - b)?,
-                OpCode::Multiply => self.arithmetic_binop(|a, b| a * b)?,
-                OpCode::Divide => {
+                RichOpcode::Add => self.do_add()?,
+                RichOpcode::Subtract => self.arithmetic_binop(|a, b| a - b)?,
+                RichOpcode::Multiply => self.arithmetic_binop(|a, b| a * b)?,
+                RichOpcode::Divide => {
                     // Check for zero
                     if let Value::Number(n) = self.stack.peek(0)? {
                         if *n == 0 {
@@ -314,7 +312,7 @@ impl VM {
 
                     self.arithmetic_binop(|a, b| a / b)?;
                 }
-                OpCode::Negate => match self.stack.peek(0)? {
+                RichOpcode::Negate => match self.stack.peek(0)? {
                     Value::Number(n) => {
                         let n = n.to_owned();
                         self.stack.pop()?;
@@ -323,26 +321,26 @@ impl VM {
                     _ => return Err(RuntimeError::IncorrectOperandType),
                 },
                 // Logical
-                OpCode::Not => {
+                RichOpcode::Not => {
                     let value = self.stack.pop()?;
                     self.stack.push(Value::Boolean(!value.is_truthy()));
                 }
                 // Comparison
-                OpCode::Equal => {
+                RichOpcode::Equal => {
                     let rhs = self.stack.pop()?;
                     let lhs = self.stack.pop()?;
                     self.stack.push(Value::Boolean(lhs == rhs));
                 }
-                OpCode::GreaterThan => self.comparison_binop(|a, b| a > b)?,
-                OpCode::LessThan => self.comparison_binop(|a, b| a < b)?,
+                RichOpcode::GreaterThan => self.comparison_binop(|a, b| a > b)?,
+                RichOpcode::LessThan => self.comparison_binop(|a, b| a < b)?,
                 // Variables
-                OpCode::DefineGlobal => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::DefineGlobal(idx) => {
+                    let name = self.fetch_string(idx);
                     let value = self.stack.pop()?;
                     self.globals.insert(name, value);
                 }
-                OpCode::GetGlobal => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::GetGlobal(idx) => {
+                    let name = self.fetch_string(idx);
                     let value = match self.globals.get(&name) {
                         Some(value) => value.clone(),
                         None => {
@@ -352,8 +350,8 @@ impl VM {
                     };
                     self.stack.push(value);
                 }
-                OpCode::SetGlobal => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::SetGlobal(idx) => {
+                    let name = self.fetch_string(idx);
                     if !self.globals.contains_key(&name) {
                         let name: String = (*name).to_owned();
                         return Err(RuntimeError::UndefinedGlobal(name));
@@ -362,38 +360,37 @@ impl VM {
                     let value = self.stack.peek(0)?.clone();
                     self.globals.insert(name, value);
                 }
-                OpCode::GetLocal => {
+                RichOpcode::GetLocal(idx) => {
+                    let idx = usize::from(idx);
                     let base_ptr = self.frame().base_ptr;
-                    let idx = self.read_next_u8() as usize;
                     let value = self.stack.get(base_ptr + idx)?.clone();
                     self.stack.push(value);
                 }
-                OpCode::SetLocal => {
+                RichOpcode::SetLocal(idx) => {
+                    let idx = usize::from(idx);
                     let base_ptr = self.frame().base_ptr;
-                    let idx = self.read_next_u8() as usize;
                     let value = self.stack.peek(0)?.clone();
                     self.stack.set(base_ptr + idx, value)?;
                 }
                 // Jumps
-                OpCode::Jump => {
-                    let jump_by = usize::from(self.read_next_u16());
-                    self.frame_mut().ip += jump_by;
+                RichOpcode::Jump(offset) => {
+                    let offset = usize::from(offset);
+                    self.frame_mut().ip += offset;
                 }
-                OpCode::JumpIfFalse => {
-                    let jump_by = usize::from(self.read_next_u16());
+                RichOpcode::JumpIfFalse(offset) => {
+                    let offset = usize::from(offset);
                     if !self.stack.peek(0)?.is_truthy() {
-                        self.frame_mut().ip += jump_by;
+                        self.frame_mut().ip += offset;
                     }
                 }
-                OpCode::Loop => {
-                    let jump_by = usize::from(self.read_next_u16());
-                    self.frame_mut().ip -= jump_by;
+                RichOpcode::Loop(offset) => {
+                    let offset = usize::from(offset);
+                    self.frame_mut().ip -= offset;
                 }
                 // Closures and Upvalues
-                OpCode::MakeClosure => {
+                RichOpcode::MakeClosure(idx) => {
                     // Load a constant; we can only proceed if it's a FnTemplate
-                    let (name, arity, chunk, upvalue_count) = match self.read_next_idx_as_constant()
-                    {
+                    let (name, arity, chunk, upvalue_count) = match self.fetch_constant(idx) {
                         ChunkConstant::FnTemplate {
                             name,
                             arity,
@@ -436,8 +433,8 @@ impl VM {
                     );
                     self.stack.push(closure);
                 }
-                OpCode::GetUpvalue => {
-                    let idx = self.read_next_u8() as usize;
+                RichOpcode::GetUpvalue(idx) => {
+                    let idx = usize::from(idx);
                     let value = match &*self.frame().upvalues[idx].borrow() {
                         UpvalueData::Open(idx) => self.stack.get(*idx)?.clone(),
                         UpvalueData::Closed(v) => v.clone(),
@@ -445,8 +442,8 @@ impl VM {
 
                     self.stack.push(value);
                 }
-                OpCode::SetUpvalue => {
-                    let idx = self.read_next_u8() as usize;
+                RichOpcode::SetUpvalue(idx) => {
+                    let idx = usize::from(idx);
                     let value = self.stack.peek(0)?.clone();
 
                     let mut upvalue = self.frame().upvalues[idx].clone();
@@ -455,18 +452,18 @@ impl VM {
                         UpvalueData::Closed(slot) => *slot = value,
                     };
                 }
-                OpCode::CloseUpvalue => {
+                RichOpcode::CloseUpvalue => {
                     self.close_upvalues(self.stack.len() - 1)?; // just the topmost element
                     self.stack.pop()?;
                 }
                 // Classes
-                OpCode::MakeClass => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::MakeClass(idx) => {
+                    let name = self.fetch_string(idx);
                     let class_value = self.object_heap.insert_new_class(name, HashMap::new());
                     self.stack.push(class_value);
                 }
-                OpCode::GetProperty => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::GetProperty(idx) => {
+                    let name = self.fetch_string(idx);
                     let instance_ptr = self.stack.peek(0)?.cast_to_instance()?;
 
                     let value = match instance_ptr.borrow().lookup(&name) {
@@ -481,8 +478,8 @@ impl VM {
                     self.stack.pop()?;
                     self.stack.push(value);
                 }
-                OpCode::SetProperty => {
-                    let name = self.read_next_idx_as_string();
+                RichOpcode::SetProperty(idx) => {
+                    let name = self.fetch_string(idx);
                     let value = self.stack.peek(0)?.clone();
                     let mut instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
 
@@ -493,8 +490,8 @@ impl VM {
                     self.stack.pop()?;
                     self.stack.push(value);
                 }
-                OpCode::MakeMethod => {
-                    let method_name = self.read_next_idx_as_string();
+                RichOpcode::MakeMethod(idx) => {
+                    let method_name = self.fetch_string(idx);
                     let method_ptr = self.stack.peek(0)?.cast_to_closure()?;
                     let mut class_ptr = self.stack.peek(1)?.cast_to_class()?;
 
@@ -504,9 +501,9 @@ impl VM {
                         .insert(method_name, method_ptr.clone());
                     self.stack.pop()?; // pop just the method
                 }
-                OpCode::Invoke => {
-                    let method_name = self.read_next_idx_as_string();
-                    let arg_count: usize = self.read_next_u8().into();
+                RichOpcode::Invoke(idx, argc) => {
+                    let method_name = self.fetch_string(idx);
+                    let arg_count = usize::from(argc);
 
                     let receiver_ptr = self.stack.peek(arg_count)?.cast_to_instance()?;
 
@@ -521,15 +518,15 @@ impl VM {
                         PropertyLookup::NotFound => return Err(RuntimeError::UndefinedProperty),
                     };
                 }
-                OpCode::Inherit => {
+                RichOpcode::Inherit => {
                     let superclass_ptr = self.stack.peek(1)?.cast_to_class()?;
                     let mut class_ptr = self.stack.peek(0)?.cast_to_class()?;
 
                     let methods = superclass_ptr.borrow().methods.clone();
                     class_ptr.borrow_mut().methods = methods;
                 }
-                OpCode::GetSuper => {
-                    let method_name = self.read_next_idx_as_string();
+                RichOpcode::GetSuper(idx) => {
+                    let method_name = self.fetch_string(idx);
                     let class_ptr = self.stack.peek(0)?.cast_to_class()?;
                     let instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
 
@@ -547,9 +544,9 @@ impl VM {
                     self.stack.pop()?;
                     self.stack.push(value);
                 }
-                OpCode::SuperInvoke => {
-                    let method_name = self.read_next_idx_as_string();
-                    let arg_count: usize = self.read_next_u8().into();
+                RichOpcode::SuperInvoke(idx, argc) => {
+                    let method_name = self.fetch_string(idx);
+                    let arg_count = usize::from(argc);
 
                     let superclass_ptr = self.stack.peek(0)?.cast_to_class()?;
 
@@ -563,11 +560,11 @@ impl VM {
                     self.stack.pop()?;
                 }
                 // Other
-                OpCode::Call => {
-                    let arg_count: usize = self.read_next_u8().into();
+                RichOpcode::Call(argc) => {
+                    let arg_count = usize::from(argc);
                     self.call(arg_count)?;
                 }
-                OpCode::Return => {
+                RichOpcode::Return => {
                     // Rescue the return value off the stack
                     let result = self.pop_frame()?;
 
@@ -578,11 +575,11 @@ impl VM {
                         self.stack.push(result);
                     }
                 }
-                OpCode::Print => {
+                RichOpcode::Print => {
                     let value = self.stack.pop()?;
                     println!("[out] {:?}", value);
                 }
-                OpCode::Pop => {
+                RichOpcode::Pop => {
                     self.stack.pop()?;
                 }
             }
@@ -651,20 +648,27 @@ impl VM {
         short
     }
 
-    fn try_read_next_op(&mut self) -> Result<OpCode, u8> {
+    fn try_read_next_op(&mut self) -> RuntimeResult<RichOpcode> {
         let frame = self.frame_mut();
         let result = frame.chunk.try_read_op(frame.ip);
-        frame.ip += 1;
-        result
+        match result {
+            Ok((op, next_ip)) => {
+                frame.ip = next_ip;
+                Ok(op)
+            }
+            Err(e) => Err(match e {
+                OpcodeError::UnrecognizedOpcode(byte) => RuntimeError::InvalidOpcode(byte),
+                OpcodeError::OutOfBounds => RuntimeError::InstructionOutOfBounds,
+            }),
+        }
     }
 
-    fn read_next_idx_as_constant(&mut self) -> ChunkConstant {
-        let idx = self.read_next_u8();
+    fn fetch_constant(&mut self, idx: ConstantIdx) -> ChunkConstant {
         self.frame().chunk.lookup_constant(idx)
     }
 
-    fn read_next_idx_as_string(&mut self) -> InternedString {
-        match self.read_next_idx_as_constant() {
+    fn fetch_string(&mut self, idx: ConstantIdx) -> InternedString {
+        match self.fetch_constant(idx) {
             ChunkConstant::String(s) => s,
             _ => panic!("Global table contains non-string"),
         }

@@ -27,6 +27,7 @@ pub enum RuntimeError {
     NotAClosure,
     UndefinedProperty,
     ArgumentsToDefaultInitializer,
+    InstructionOutOfBounds,
 }
 
 pub type CompilerResult<T> = Result<T, CompilerError>;

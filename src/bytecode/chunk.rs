@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::rc::Rc;
 
-use super::opcode::{ConstantIdx, OpCode, RichOpcode};
+use super::opcode::{ConstantIdx, OpCode, OpcodeError, RichOpcode};
 use super::string_interning::InternedString;
 
 // Chunk constants are somewhat different from runtime values -- there's
@@ -53,11 +53,8 @@ impl Chunk {
         self.write_u8(op.into(), line_no)
     }
 
-    pub fn try_read_op(&self, idx: usize) -> Result<OpCode, u8> {
-        let byte = self.code[idx];
-
-        // Convert byte to opcode
-        OpCode::try_from(byte).map_err(|e| e.number)
+    pub fn try_read_op(&self, offset: usize) -> Result<(RichOpcode, usize), OpcodeError> {
+        RichOpcode::decode(&self.code, offset)
     }
 
     pub fn write_u8(&mut self, byte: u8, line_no: usize) {
