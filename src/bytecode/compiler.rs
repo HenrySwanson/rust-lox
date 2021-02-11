@@ -6,8 +6,8 @@ use crate::common::ast;
 use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};
 use super::opcode::{
-    ConstantIdx, LocalIdx, OpCode, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES, UPVALUE_KIND_IMMEDIATE,
-    UPVALUE_KIND_RECURSIVE,
+    ConstantIdx, LocalIdx, RichOpcode, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES,
+    UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE,
 };
 use super::string_interning::StringInterner;
 
@@ -156,7 +156,7 @@ impl<'strtable> Compiler<'strtable> {
         }
 
         // Return, to exit the VM
-        self.current_chunk().write_op(OpCode::Return, 0);
+        self.emit_op(RichOpcode::Return, 0);
 
         // Return the chunk defining main()
         let root_state = self.context_stack.pop().expect("Context stack empty!");
@@ -171,11 +171,11 @@ impl<'strtable> Compiler<'strtable> {
         match &stmt.kind {
             ast::StmtKind::Expression(expr) => {
                 self.compile_expression(expr)?;
-                self.current_chunk().write_op(OpCode::Pop, line_no);
+                self.emit_op(RichOpcode::Pop, line_no);
             }
             ast::StmtKind::Print(expr) => {
                 self.compile_expression(expr)?;
-                self.current_chunk().write_op(OpCode::Print, line_no);
+                self.emit_op(RichOpcode::Print, line_no);
             }
             ast::StmtKind::VariableDecl(name, expr) => {
                 // Create instructions to put the value of expr on top of the stack
@@ -219,15 +219,14 @@ impl<'strtable> Compiler<'strtable> {
                         self.emit_implicit_return_arg(line_no);
                     }
                 }
-                self.current_chunk().write_op(OpCode::Return, line_no);
+                self.emit_op(RichOpcode::Return, line_no);
             }
             ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 self.declare_variable(name)?;
 
                 // Store the name as a constant
                 let idx = self.add_string_constant(name);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::MakeClass, idx, line_no);
+                self.emit_op(RichOpcode::MakeClass(idx), line_no);
                 self.define_variable(name, line_no)?;
 
                 // If there's a superclass, load it in the next local slot.
@@ -243,7 +242,7 @@ impl<'strtable> Compiler<'strtable> {
 
                     self.get_variable(&superclass.name, line_no)?;
                     self.get_variable(name, line_no)?;
-                    self.current_chunk().write_op(OpCode::Inherit, line_no);
+                    self.emit_op(RichOpcode::Inherit, line_no);
                 } else {
                     self.get_variable(name, line_no)?;
                 }
@@ -258,15 +257,11 @@ impl<'strtable> Compiler<'strtable> {
                     self.compile_function_decl(&method, method.body.span.lo.line_no, fn_type)?;
 
                     let idx = self.add_string_constant(&method.name);
-                    self.current_chunk().write_op_with_u8(
-                        OpCode::MakeMethod,
-                        idx,
-                        method.body.span.hi.line_no,
-                    );
+                    self.emit_op(RichOpcode::MakeMethod(idx), method.body.span.hi.line_no);
                 }
 
                 // Pop the class off the stack
-                self.current_chunk().write_op(OpCode::Pop, line_no);
+                self.emit_op(RichOpcode::Pop, line_no);
 
                 if superclass.is_some() {
                     self.end_scope();
@@ -288,20 +283,20 @@ impl<'strtable> Compiler<'strtable> {
         self.compile_expression(condition)?;
 
         // If we pass the jump, pop the condition and do the if-body
-        let jump_to_else = self.current_chunk().emit_jump(OpCode::JumpIfFalse, line_no);
-        self.current_chunk().write_op(OpCode::Pop, line_no);
+        let jump_to_else = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
+        self.emit_op(RichOpcode::Pop, line_no);
         self.compile_statement(if_body)?;
 
         // Otherwise, pop the condition now, and do the else body.
         // Note that we always need an else-jump so that we only ever
         // pop once.
-        let jump_over_else = self.current_chunk().emit_jump(OpCode::Jump, line_no);
-        self.current_chunk().patch_jump(jump_to_else);
-        self.current_chunk().write_op(OpCode::Pop, line_no);
+        let jump_over_else = self.emit_jump(RichOpcode::Jump(0), line_no);
+        self.patch_jump(jump_to_else);
+        self.emit_op(RichOpcode::Pop, line_no);
         if let Some(else_body) = else_body {
             self.compile_statement(else_body)?;
         }
-        self.current_chunk().patch_jump(jump_over_else);
+        self.patch_jump(jump_over_else);
 
         Ok(())
     }
@@ -315,14 +310,14 @@ impl<'strtable> Compiler<'strtable> {
         let loop_start = self.current_chunk().len();
 
         self.compile_expression(condition)?;
-        let exit_jump = self.current_chunk().emit_jump(OpCode::JumpIfFalse, line_no);
-        self.current_chunk().write_op(OpCode::Pop, line_no);
+        let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
+        self.emit_op(RichOpcode::Pop, line_no);
 
         self.compile_statement(body)?;
-        self.current_chunk().emit_loop(loop_start, line_no);
+        self.emit_loop(loop_start, line_no);
 
-        self.current_chunk().patch_jump(exit_jump);
-        self.current_chunk().write_op(OpCode::Pop, line_no);
+        self.patch_jump(exit_jump);
+        self.emit_op(RichOpcode::Pop, line_no);
 
         Ok(())
     }
@@ -356,7 +351,7 @@ impl<'strtable> Compiler<'strtable> {
         self.compile_statement(fn_decl.body.as_ref())?;
         let last_line = fn_decl.body.span.hi.line_no;
         self.emit_implicit_return_arg(last_line);
-        self.current_chunk().write_op(OpCode::Return, last_line);
+        self.emit_op(RichOpcode::Return, last_line);
 
         // no need to end scope, we're just killing this compiler context completely
         let ctx = self.context_stack.pop().expect("Context stack empty!");
@@ -374,8 +369,7 @@ impl<'strtable> Compiler<'strtable> {
         // Unlike regular constants, we load this with MAKE_CLOSURE
         // TODO should i have a separate list for these in the chunk?
         let idx = self.add_constant(fn_template);
-        self.current_chunk()
-            .write_op_with_u8(OpCode::MakeClosure, idx, line_no);
+        self.emit_op(RichOpcode::MakeClosure(idx), line_no);
 
         // Now encode all the upvalues that this closure should have
         for upvalue in ctx.upvalues.iter().cloned() {
@@ -409,15 +403,13 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Get(expr, name) => {
                 let idx = self.add_string_constant(name);
                 self.compile_expression(expr)?;
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::GetProperty, idx, line_no);
+                self.emit_op(RichOpcode::GetProperty(idx), line_no);
             }
             ast::ExprKind::Set(expr, name, value_expr) => {
                 let idx = self.add_string_constant(name);
                 self.compile_expression(expr)?;
                 self.compile_expression(value_expr)?;
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::SetProperty, idx, line_no);
+                self.emit_op(RichOpcode::SetProperty(idx), line_no);
             }
             ast::ExprKind::This(_) => {
                 self.get_variable(THIS_STR, line_no)?;
@@ -427,8 +419,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.get_variable(SUPER_STR, line_no)?;
 
                 let idx = self.add_string_constant(method_name);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::GetSuper, idx, line_no);
+                self.emit_op(RichOpcode::GetSuper(idx), line_no);
             }
         };
 
@@ -440,21 +431,23 @@ impl<'strtable> Compiler<'strtable> {
             ast::Literal::Number(n) => {
                 let value = ChunkConstant::Number(*n);
                 let idx = self.add_constant(value);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::Constant, idx, line_no);
+                self.emit_op(RichOpcode::Constant(idx), line_no);
             }
             ast::Literal::Boolean(b) => {
-                let opcode = if *b { OpCode::True } else { OpCode::False };
-                self.current_chunk().write_op(opcode, line_no);
+                let opcode = if *b {
+                    RichOpcode::True
+                } else {
+                    RichOpcode::False
+                };
+                self.emit_op(opcode, line_no);
             }
             ast::Literal::Str(s) => {
                 let value = ChunkConstant::String(self.string_table.get_interned(s));
                 let idx = self.add_constant(value);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::Constant, idx, line_no);
+                self.emit_op(RichOpcode::Constant(idx), line_no);
             }
             ast::Literal::Nil => {
-                self.current_chunk().write_op(OpCode::Nil, line_no);
+                self.emit_op(RichOpcode::Nil, line_no);
             }
         }
     }
@@ -470,26 +463,25 @@ impl<'strtable> Compiler<'strtable> {
         self.compile_expression(lhs)?;
         self.compile_expression(rhs)?;
 
-        let chunk = self.current_chunk();
         match op {
-            ast::BinaryOperator::Add => chunk.write_op(OpCode::Add, line_no),
-            ast::BinaryOperator::Subtract => chunk.write_op(OpCode::Subtract, line_no),
-            ast::BinaryOperator::Multiply => chunk.write_op(OpCode::Multiply, line_no),
-            ast::BinaryOperator::Divide => chunk.write_op(OpCode::Divide, line_no),
-            ast::BinaryOperator::EqualTo => chunk.write_op(OpCode::Equal, line_no),
+            ast::BinaryOperator::Add => self.emit_op(RichOpcode::Add, line_no),
+            ast::BinaryOperator::Subtract => self.emit_op(RichOpcode::Subtract, line_no),
+            ast::BinaryOperator::Multiply => self.emit_op(RichOpcode::Multiply, line_no),
+            ast::BinaryOperator::Divide => self.emit_op(RichOpcode::Divide, line_no),
+            ast::BinaryOperator::EqualTo => self.emit_op(RichOpcode::Equal, line_no),
             ast::BinaryOperator::NotEqualTo => {
-                chunk.write_op(OpCode::Equal, line_no);
-                chunk.write_op(OpCode::Not, line_no)
+                self.emit_op(RichOpcode::Equal, line_no);
+                self.emit_op(RichOpcode::Not, line_no)
             }
-            ast::BinaryOperator::GreaterThan => chunk.write_op(OpCode::GreaterThan, line_no),
+            ast::BinaryOperator::GreaterThan => self.emit_op(RichOpcode::GreaterThan, line_no),
             ast::BinaryOperator::GreaterEq => {
-                chunk.write_op(OpCode::LessThan, line_no);
-                chunk.write_op(OpCode::Not, line_no)
+                self.emit_op(RichOpcode::LessThan, line_no);
+                self.emit_op(RichOpcode::Not, line_no)
             }
-            ast::BinaryOperator::LessThan => chunk.write_op(OpCode::LessThan, line_no),
+            ast::BinaryOperator::LessThan => self.emit_op(RichOpcode::LessThan, line_no),
             ast::BinaryOperator::LessEq => {
-                chunk.write_op(OpCode::GreaterThan, line_no);
-                chunk.write_op(OpCode::Not, line_no)
+                self.emit_op(RichOpcode::GreaterThan, line_no);
+                self.emit_op(RichOpcode::Not, line_no)
             }
         };
 
@@ -499,11 +491,11 @@ impl<'strtable> Compiler<'strtable> {
     fn compile_prefix(&mut self, op: ast::UnaryOperator, expr: &ast::Expr) -> CompilerResult<()> {
         self.compile_expression(expr)?;
         let opcode = match op {
-            ast::UnaryOperator::Negate => OpCode::Negate,
-            ast::UnaryOperator::LogicalNot => OpCode::Not,
+            ast::UnaryOperator::Negate => RichOpcode::Negate,
+            ast::UnaryOperator::LogicalNot => RichOpcode::Not,
         };
 
-        self.current_chunk().write_op(opcode, expr.span.lo.line_no);
+        self.emit_op(opcode, expr.span.lo.line_no);
         Ok(())
     }
 
@@ -511,13 +503,10 @@ impl<'strtable> Compiler<'strtable> {
         self.compile_expression(lhs)?;
 
         // lhs is now on the stack; if it's falsey, keep it. otherwise, try the rhs.
-        let jump = self
-            .current_chunk()
-            .emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
-        self.current_chunk()
-            .write_op(OpCode::Pop, rhs.span.lo.line_no);
+        let jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
+        self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
         self.compile_expression(rhs)?;
-        self.current_chunk().patch_jump(jump);
+        self.patch_jump(jump);
 
         Ok(())
     }
@@ -526,18 +515,13 @@ impl<'strtable> Compiler<'strtable> {
         self.compile_expression(lhs)?;
 
         // lhs is now on the stack. if it's true, we want to keep it.
-        let skip_jump = self
-            .current_chunk()
-            .emit_jump(OpCode::JumpIfFalse, lhs.span.lo.line_no);
-        let jump_for_true = self
-            .current_chunk()
-            .emit_jump(OpCode::Jump, lhs.span.lo.line_no);
-        self.current_chunk().patch_jump(skip_jump);
+        let skip_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
+        let jump_for_true = self.emit_jump(RichOpcode::Jump(0), lhs.span.lo.line_no);
+        self.patch_jump(skip_jump);
 
-        self.current_chunk()
-            .write_op(OpCode::Pop, rhs.span.lo.line_no);
+        self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
         self.compile_expression(rhs)?;
-        self.current_chunk().patch_jump(jump_for_true);
+        self.patch_jump(jump_for_true);
 
         Ok(())
     }
@@ -559,9 +543,7 @@ impl<'strtable> Compiler<'strtable> {
                 let line_no = callee.span.hi.line_no;
                 let idx = self.add_string_constant(method_name);
 
-                self.current_chunk().write_op(OpCode::Invoke, line_no);
-                self.current_chunk().write_u8(idx, line_no);
-                self.current_chunk().write_u8(num_args, line_no);
+                self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
             ast::ExprKind::Super(_, method_name) => {
                 // We put the reciever on the stack, then all the arguments, then the superclass
@@ -576,9 +558,7 @@ impl<'strtable> Compiler<'strtable> {
                 let line_no = callee.span.hi.line_no;
                 let idx = self.add_string_constant(method_name);
 
-                self.current_chunk().write_op(OpCode::SuperInvoke, line_no);
-                self.current_chunk().write_u8(idx, line_no);
-                self.current_chunk().write_u8(num_args, line_no);
+                self.emit_op(RichOpcode::SuperInvoke(idx, num_args), line_no);
             }
             _ => {
                 // Normal path: put the callee and its args on the stack, in order
@@ -586,11 +566,7 @@ impl<'strtable> Compiler<'strtable> {
                 for arg in args.iter() {
                     self.compile_expression(arg)?;
                 }
-                self.current_chunk().write_op_with_u8(
-                    OpCode::Call,
-                    num_args,
-                    callee.span.hi.line_no,
-                );
+                self.emit_op(RichOpcode::Call(num_args), callee.span.hi.line_no);
             }
         }
 
@@ -615,8 +591,7 @@ impl<'strtable> Compiler<'strtable> {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
             let global_idx = self.add_string_constant(name);
-            self.current_chunk()
-                .write_op_with_u8(OpCode::DefineGlobal, global_idx, line_no);
+            self.emit_op(RichOpcode::DefineGlobal(global_idx), line_no);
         } else {
             self.get_ctx_mut().mark_last_local_initialized();
         }
@@ -629,16 +604,13 @@ impl<'strtable> Compiler<'strtable> {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a GetGlobal instruction.
                 let global_idx = self.add_string_constant(var_name);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::GetGlobal, global_idx, line_no);
+                self.emit_op(RichOpcode::GetGlobal(global_idx), line_no);
             }
             VariableLocator::Local(idx) => {
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::GetLocal, idx, line_no);
+                self.emit_op(RichOpcode::GetLocal(idx), line_no);
             }
             VariableLocator::Upvalue(idx) => {
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::GetUpvalue, idx, line_no);
+                self.emit_op(RichOpcode::GetUpvalue(idx), line_no);
             }
         }
 
@@ -659,16 +631,13 @@ impl<'strtable> Compiler<'strtable> {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a SetGlobal instruction.
                 let global_idx = self.add_string_constant(var_name);
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::SetGlobal, global_idx, line_no);
+                self.emit_op(RichOpcode::SetGlobal(global_idx), line_no);
             }
             VariableLocator::Local(idx) => {
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::SetLocal, idx, line_no);
+                self.emit_op(RichOpcode::SetLocal(idx), line_no);
             }
             VariableLocator::Upvalue(idx) => {
-                self.current_chunk()
-                    .write_op_with_u8(OpCode::SetUpvalue, idx, line_no);
+                self.emit_op(RichOpcode::SetUpvalue(idx), line_no);
             }
         }
 
@@ -720,9 +689,9 @@ impl<'strtable> Compiler<'strtable> {
             }
 
             if local.captured {
-                state.chunk.write_op(OpCode::CloseUpvalue, 0);
+                state.chunk.write_op(RichOpcode::CloseUpvalue, 0);
             } else {
-                state.chunk.write_op(OpCode::Pop, 0); // TODO line no
+                state.chunk.write_op(RichOpcode::Pop, 0); // TODO line no
             }
 
             state.locals.pop();
@@ -771,11 +740,41 @@ impl<'strtable> Compiler<'strtable> {
     fn emit_implicit_return_arg(&mut self, line_no: usize) {
         // this is pulled out into its own method so it can be called in two spots
         if self.get_ctx().is_initializer {
-            self.current_chunk()
-                .write_op_with_u8(OpCode::GetLocal, 0, line_no);
+            self.emit_op(RichOpcode::GetLocal(0), line_no);
         } else {
-            self.current_chunk().write_op(OpCode::Nil, line_no);
+            self.emit_op(RichOpcode::Nil, line_no);
         }
+    }
+
+    // chunk-writing methods
+
+    fn emit_op(&mut self, op: RichOpcode, line_no: usize) {
+        self.current_chunk().write_op(op, line_no);
+    }
+
+    fn emit_jump(&mut self, op: RichOpcode, line_no: usize) -> usize {
+        let jmp_idx = self.current_chunk().len();
+        self.emit_op(op, line_no);
+        jmp_idx
+    }
+
+    fn patch_jump(&mut self, jmp_idx: usize) {
+        // distance from (instruction after JMP) to here
+        let distance = self.current_chunk().len() - (jmp_idx + 3);
+
+        // TODO: better error handling here...
+        let distance = u16::try_from(distance).expect("Jump distance too large!");
+        self.current_chunk()
+            .patch_u16(jmp_idx + 1, distance)
+            .unwrap();
+    }
+
+    fn emit_loop(&mut self, loop_start_idx: usize, line_no: usize) {
+        // distance from (instruction after LOOP) to loop_start
+        let distance = (self.current_chunk().len() + 3) - loop_start_idx;
+        let distance = u16::try_from(distance).expect("Loop distance too large!");
+
+        self.emit_op(RichOpcode::Loop(distance), line_no);
     }
 
     #[allow(unused_variables)]

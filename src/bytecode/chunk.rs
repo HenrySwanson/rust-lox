@@ -49,12 +49,16 @@ impl Chunk {
         self.code.len()
     }
 
-    pub fn write_op(&mut self, op: OpCode, line_no: usize) {
-        self.write_u8(op.into(), line_no)
-    }
+    pub fn write_op(&mut self, op: RichOpcode, line_no: usize) {
+        let l1 = self.len();
+        RichOpcode::encode(&mut self.code, op);
+        let l2 = self.len();
 
-    pub fn try_read_op(&self, offset: usize) -> Result<(RichOpcode, usize), OpcodeError> {
-        RichOpcode::decode(&self.code, offset)
+        let delta = l2 - l1;
+        self.line_nos.reserve(delta);
+        for _ in 0..delta {
+            self.line_nos.push(line_no);
+        }
     }
 
     pub fn write_u8(&mut self, byte: u8, line_no: usize) {
@@ -62,58 +66,34 @@ impl Chunk {
         self.line_nos.push(line_no);
     }
 
-    pub fn read_u8(&self, idx: usize) -> u8 {
-        self.code[idx]
+    pub fn patch_u8(&mut self, offset: usize, byte: u8) -> Result<(), OpcodeError> {
+        match self.code.get_mut(offset) {
+            Some(slot) => {
+                *slot = byte;
+                Ok(())
+            }
+            None => Err(OpcodeError::OutOfBounds),
+        }
     }
 
-    pub fn write_u16(&mut self, short: u16, line_no: usize) {
-        // remember to write twice to line #s
-        let bytes = short.to_be_bytes();
-        self.write_u8(bytes[0], line_no);
-        self.write_u8(bytes[1], line_no);
+    pub fn patch_u16(&mut self, offset: usize, short: u16) -> Result<(), OpcodeError> {
+        for (i, byte) in short.to_be_bytes().iter().copied().enumerate() {
+            self.patch_u8(offset + i, byte)?;
+        }
+        Ok(())
+    }
+
+    pub fn try_read_op(&self, offset: usize) -> Result<(RichOpcode, usize), OpcodeError> {
+        RichOpcode::decode(&self.code, offset)
+    }
+
+    pub fn read_u8(&self, idx: usize) -> u8 {
+        self.code[idx]
     }
 
     pub fn read_u16(&self, idx: usize) -> u16 {
         let bytes = [self.code[idx], self.code[idx + 1]];
         u16::from_be_bytes(bytes)
-    }
-
-    pub fn write_op_with_u8(&mut self, op: OpCode, byte: u8, line_no: usize) {
-        self.write_op(op, line_no);
-        self.write_u8(byte, line_no);
-    }
-
-    pub fn write_op_with_u16(&mut self, op: OpCode, short: u16, line_no: usize) {
-        self.write_op(op, line_no);
-        self.write_u16(short, line_no);
-    }
-
-    // instruction-operations that aren't quite "append data to end of code"
-
-    pub fn emit_jump(&mut self, op: OpCode, line_no: usize) -> usize {
-        self.write_op_with_u16(op, 0xffff, line_no);
-        self.code.len() - 2 // -2 so that we return the location of the argument
-    }
-
-    pub fn patch_jump(&mut self, idx: usize) {
-        // distance from (instruction after JMP) to here
-        let jump_distance = self.code.len() - (idx + 2);
-
-        // TODO: better error handling here...
-        let jump_bytes = u16::try_from(jump_distance)
-            .expect("Jump distance too large!")
-            .to_be_bytes();
-
-        self.code[idx] = jump_bytes[0];
-        self.code[idx + 1] = jump_bytes[1];
-    }
-
-    pub fn emit_loop(&mut self, loop_start: usize, line_no: usize) {
-        // distance from (instruction after JMP) to loop_start
-        let jump_distance = (self.code.len() + 3) - loop_start;
-        let jump_distance = u16::try_from(jump_distance).expect("Loop distance too large!");
-
-        self.write_op_with_u16(OpCode::Loop, jump_distance, line_no);
     }
 
     pub fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {
