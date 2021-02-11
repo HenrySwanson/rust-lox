@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::rc::Rc;
 
-use super::opcode::{ConstantIdx, OpCode, OpcodeError, RichOpcode};
+use super::opcode::{ConstantIdx, OpCode, OpcodeError, RichOpcode, UpvalueAddr};
 use super::string_interning::InternedString;
 
 // Chunk constants are somewhat different from runtime values -- there's
@@ -66,6 +66,12 @@ impl Chunk {
         self.line_nos.push(line_no);
     }
 
+    pub fn write_upvalue(&mut self, addr: UpvalueAddr, line_no: usize) {
+        UpvalueAddr::encode(&mut self.code, addr);
+        self.line_nos.push(line_no);
+        self.line_nos.push(line_no);
+    }
+
     pub fn patch_u8(&mut self, offset: usize, byte: u8) -> Result<(), OpcodeError> {
         match self.code.get_mut(offset) {
             Some(slot) => {
@@ -94,6 +100,10 @@ impl Chunk {
     pub fn read_u16(&self, idx: usize) -> u16 {
         let bytes = [self.code[idx], self.code[idx + 1]];
         u16::from_be_bytes(bytes)
+    }
+
+    pub fn try_read_upvalue(&self, offset: usize) -> Result<UpvalueAddr, OpcodeError> {
+        UpvalueAddr::decode(&self.code, offset)
     }
 
     pub fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {

@@ -6,9 +6,7 @@ use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{GcHeap, GcPtr};
 use super::native;
 use super::native::NativeFunction;
-use super::opcode::{
-    ConstantIdx, OpcodeError, RichOpcode, UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE,
-};
+use super::opcode::{ConstantIdx, RichOpcode, UpvalueAddr};
 use super::string_interning::{InternedString, StringInterner};
 use super::value::{
     LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,
@@ -403,26 +401,24 @@ impl VM {
                     // Read the upvalues
                     let mut upvalues = Vec::with_capacity(upvalue_count);
                     for _ in 0..upvalue_count {
-                        let upvalue_kind = self.read_next_u8();
-                        let upvalue_idx = self.read_next_u8();
-                        let upvalue_ref = match upvalue_kind {
-                            UPVALUE_KIND_IMMEDIATE => {
+                        let upvalue_addr = self.try_read_next_upvalue()?;
+                        let upvalue_obj = match upvalue_addr {
+                            UpvalueAddr::Immediate(local_idx) => {
                                 // Immediate means the upvalue is a local of the parent.
                                 // But we are (right now) in the frame of this closure's parent,
                                 // so this upvalue is definitely still on the stack.
-                                let stack_idx = self.frame().base_ptr + upvalue_idx as usize;
+                                let stack_idx = self.frame().base_ptr + local_idx as usize;
                                 self.make_open_upvalue(stack_idx)
                             }
-                            UPVALUE_KIND_RECURSIVE => {
+                            UpvalueAddr::Recursive(upvalue_idx) => {
                                 // Recursive means the upvalue is a local of grandparent or
                                 // higher. In other words, it's an upvalue of the parent, and
                                 // the index is into the parent upvalues. Just grab it from
                                 // our upvalue list and clone it.
                                 self.frame().upvalues[upvalue_idx as usize].clone()
                             }
-                            _ => return Err(RuntimeError::BadUpvalue),
                         };
-                        upvalues.push(upvalue_ref);
+                        upvalues.push(upvalue_obj);
                     }
 
                     let closure = self.object_heap.insert_new_closure(
@@ -633,21 +629,6 @@ impl VM {
         Ok(result)
     }
 
-    // TODO error for overrunning chunk?
-    fn read_next_u8(&mut self) -> u8 {
-        let frame = self.frame_mut();
-        let byte = frame.chunk.read_u8(frame.ip);
-        frame.ip += 1;
-        byte
-    }
-
-    fn read_next_u16(&mut self) -> u16 {
-        let frame = self.frame_mut();
-        let short = frame.chunk.read_u16(frame.ip);
-        frame.ip += 2;
-        short
-    }
-
     fn try_read_next_op(&mut self) -> RuntimeResult<RichOpcode> {
         let frame = self.frame_mut();
         let result = frame.chunk.try_read_op(frame.ip);
@@ -656,10 +637,19 @@ impl VM {
                 frame.ip = next_ip;
                 Ok(op)
             }
-            Err(e) => Err(match e {
-                OpcodeError::UnrecognizedOpcode(byte) => RuntimeError::InvalidOpcode(byte),
-                OpcodeError::OutOfBounds => RuntimeError::InstructionOutOfBounds,
-            }),
+            Err(e) => Err(RuntimeError::from(e)),
+        }
+    }
+
+    fn try_read_next_upvalue(&mut self) -> RuntimeResult<UpvalueAddr> {
+        let frame = self.frame_mut();
+        let result = frame.chunk.try_read_upvalue(frame.ip);
+        match result {
+            Ok(addr) => {
+                frame.ip += 2;
+                Ok(addr)
+            }
+            Err(e) => Err(RuntimeError::from(e)),
         }
     }
 

@@ -6,8 +6,7 @@ use crate::common::ast;
 use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};
 use super::opcode::{
-    ConstantIdx, LocalIdx, RichOpcode, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES,
-    UPVALUE_KIND_IMMEDIATE, UPVALUE_KIND_RECURSIVE,
+    ConstantIdx, LocalIdx, RichOpcode, UpvalueAddr, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES,
 };
 use super::string_interning::StringInterner;
 
@@ -21,17 +20,6 @@ struct Local {
     scope_depth: u32,
     initialized: bool,
     captured: bool,
-}
-
-// Describes the information of an upvalue (a variable declared in an
-// enclosing scope.)
-#[derive(Clone, PartialEq, Eq)]
-enum Upvalue {
-    // A local defined in the immediately enclosing scope
-    Immediate(LocalIdx),
-    // A local defined in some higher scope, i.e., an upvalue in
-    // the immediately enclosing scope
-    Recursive(UpvalueIdx),
 }
 
 // A return type describing how to access a resolved variable name
@@ -51,7 +39,7 @@ enum FunctionType {
 struct Context {
     chunk: Chunk,
     locals: Vec<Local>,
-    upvalues: Vec<Upvalue>,
+    upvalues: Vec<UpvalueAddr>,
     scope_depth: u32,
     is_initializer: bool,
 }
@@ -116,7 +104,7 @@ impl Context {
         Ok(())
     }
 
-    fn add_upvalue(&mut self, key: Upvalue) -> CompilerResult<UpvalueIdx> {
+    fn add_upvalue(&mut self, key: UpvalueAddr) -> CompilerResult<UpvalueIdx> {
         for (i, upvalue) in self.upvalues.iter().enumerate() {
             if key == *upvalue {
                 return Ok(i.try_into().unwrap());
@@ -373,12 +361,7 @@ impl<'strtable> Compiler<'strtable> {
 
         // Now encode all the upvalues that this closure should have
         for upvalue in ctx.upvalues.iter().cloned() {
-            let bytes = match upvalue {
-                Upvalue::Immediate(idx) => [UPVALUE_KIND_IMMEDIATE, idx],
-                Upvalue::Recursive(idx) => [UPVALUE_KIND_RECURSIVE, idx],
-            };
-            self.current_chunk().write_u8(bytes[0], line_no);
-            self.current_chunk().write_u8(bytes[1], line_no);
+            self.current_chunk().write_upvalue(upvalue, line_no);
         }
 
         Ok(())
@@ -727,9 +710,9 @@ impl<'strtable> Compiler<'strtable> {
 
         // The first upvalue we mark is an Immediate, but after that, it's all Recursive
         let mut upvalue_idx =
-            self.context_stack[root_idx + 1].add_upvalue(Upvalue::Immediate(local_idx))?;
+            self.context_stack[root_idx + 1].add_upvalue(UpvalueAddr::Immediate(local_idx))?;
         for context in self.context_stack[root_idx + 2..].iter_mut() {
-            upvalue_idx = context.add_upvalue(Upvalue::Recursive(upvalue_idx))?;
+            upvalue_idx = context.add_upvalue(UpvalueAddr::Recursive(upvalue_idx))?;
         }
 
         // If we made it here, it means this variable is local to some enclosing scope,

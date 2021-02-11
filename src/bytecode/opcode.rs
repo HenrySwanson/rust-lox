@@ -14,13 +14,25 @@ pub const MAX_UPVALUES: usize = 256;
 
 // Upvalues come in two types, and we record which one by writing an
 // an additional byte.
-pub const UPVALUE_KIND_RECURSIVE: u8 = 0;
-pub const UPVALUE_KIND_IMMEDIATE: u8 = 1;
+const UPVALUE_KIND_RECURSIVE: u8 = 0;
+const UPVALUE_KIND_IMMEDIATE: u8 = 1;
+
+// Describes the address of an upvalue (a variable declared in an
+// enclosing scope.)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UpvalueAddr {
+    // A local defined in the immediately enclosing scope
+    Immediate(LocalIdx),
+    // A local defined in some higher scope, i.e., an upvalue in
+    // the immediately enclosing scope
+    Recursive(UpvalueIdx),
+}
 
 #[derive(Debug)]
 pub enum OpcodeError {
     UnrecognizedOpcode(u8),
     OutOfBounds,
+    BadUpvalueKind(u8),
 }
 
 #[derive(Debug)]
@@ -122,6 +134,31 @@ pub enum OpCode {
     Return,
     Print,
     Pop,
+}
+
+impl UpvalueAddr {
+    pub fn encode(code: &mut Vec<u8>, addr: Self) {
+        match addr {
+            UpvalueAddr::Immediate(idx) => {
+                code.push(UPVALUE_KIND_IMMEDIATE);
+                code.push(idx);
+            }
+            UpvalueAddr::Recursive(idx) => {
+                code.push(UPVALUE_KIND_RECURSIVE);
+                code.push(idx);
+            }
+        }
+    }
+
+    pub fn decode(code: &[u8], offset: usize) -> Result<UpvalueAddr, OpcodeError> {
+        let kind = code.get(offset).ok_or(OpcodeError::OutOfBounds)?;
+        let idx = code.get(offset + 1).ok_or(OpcodeError::OutOfBounds)?;
+        match *kind {
+            UPVALUE_KIND_IMMEDIATE => Ok(UpvalueAddr::Immediate(*idx)),
+            UPVALUE_KIND_RECURSIVE => Ok(UpvalueAddr::Recursive(*idx)),
+            _ => Err(OpcodeError::BadUpvalueKind(*kind)),
+        }
+    }
 }
 
 impl RichOpcode {

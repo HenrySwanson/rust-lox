@@ -1,4 +1,5 @@
 use super::chunk::ChunkConstant;
+use super::opcode::OpcodeError;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -32,3 +33,13 @@ pub enum RuntimeError {
 
 pub type CompilerResult<T> = Result<T, CompilerError>;
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
+
+impl From<OpcodeError> for RuntimeError {
+    fn from(e: OpcodeError) -> Self {
+        match e {
+            OpcodeError::UnrecognizedOpcode(byte) => RuntimeError::InvalidOpcode(byte),
+            OpcodeError::OutOfBounds => RuntimeError::InstructionOutOfBounds,
+            OpcodeError::BadUpvalueKind(_) => RuntimeError::BadUpvalue,
+        }
+    }
+}
