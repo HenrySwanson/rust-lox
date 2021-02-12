@@ -1,9 +1,10 @@
+use super::ast;
+use super::lexer::Lexer;
 use super::precedence::{InfixOperator, Precedence};
-use crate::common::ast;
-use crate::common::constants::{MAX_NUMBER_ARGS, SUPER_STR, THIS_STR};
-use crate::common::span::Span;
-use crate::common::token::{SpannedToken, Token};
-use crate::lexer::Lexer;
+use super::span::Span;
+use super::token::{SpannedToken, Token};
+
+const MAX_NUMBER_ARGS: usize = 256;
 
 pub struct Parser<'a> {
     source: &'a str,
@@ -426,11 +427,11 @@ impl<'src> Parser<'src> {
                 ast::ExprKind::Variable(ast::VariableRef::new(name.to_owned()))
             }
             Token::This => {
-                let var = ast::VariableRef::new(THIS_STR.to_owned());
+                let var = ast::VariableRef::new("this".to_owned());
                 ast::ExprKind::This(var)
             }
             Token::Super => {
-                let var = ast::VariableRef::new(SUPER_STR.to_owned());
+                let var = ast::VariableRef::new("super".to_owned());
                 self.eat(Token::Dot)?;
                 let method_name = self.parse_identifier()?;
                 ast::ExprKind::Super(var, method_name)

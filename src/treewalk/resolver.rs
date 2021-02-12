@@ -1,5 +1,6 @@
-use crate::common::ast;
-use crate::common::constants::{INIT_STR, SUPER_STR, THIS_STR};
+use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
+
+use crate::frontend::ast;
 
 use std::collections::HashMap;
 

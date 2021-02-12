@@ -1,4 +1,4 @@
-use crate::common::span::Span;
+use super::span::Span;
 
 // AST Nodes
 

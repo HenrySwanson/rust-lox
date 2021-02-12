@@ -1,5 +1,5 @@
 use super::object::Object;
-use crate::common::ast::{BinaryOperator, UnaryOperator};
+use crate::frontend::ast::{BinaryOperator, UnaryOperator};
 
 // TODO: separate Error and not-error (e.g. return)?
 #[derive(Debug)]

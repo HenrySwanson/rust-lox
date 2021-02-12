@@ -1,9 +1,8 @@
+use super::constants::INIT_STR;
 use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
 use super::object::Object;
-
-use crate::common::constants::INIT_STR;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

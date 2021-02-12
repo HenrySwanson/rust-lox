@@ -1,6 +1,6 @@
 use super::cursor::Cursor;
-use crate::common::span::Span;
-use crate::common::token::{SpannedToken, Token};
+use super::span::Span;
+use super::token::{SpannedToken, Token};
 
 pub struct Lexer<'a> {
     source: &'a str,

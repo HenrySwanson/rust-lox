@@ -1,7 +1,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::rc::Rc;
 
-use crate::common::ast;
+use crate::frontend::ast;
 
 use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};

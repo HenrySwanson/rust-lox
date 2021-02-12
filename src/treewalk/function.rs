@@ -1,10 +1,10 @@
+use super::constants::THIS_STR;
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::interpreter::Interpreter;
 use super::object::Object;
 
-use crate::common::ast;
-use crate::common::constants::THIS_STR;
+use crate::frontend::ast;
 
 use std::fmt;
 use std::rc::Rc;

@@ -1,4 +1,4 @@
-use crate::common::span::CodePosition;
+use super::span::CodePosition;
 use std::iter::Peekable;
 use std::str::CharIndices;
 

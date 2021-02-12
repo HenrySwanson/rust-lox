@@ -1,7 +1,7 @@
 use crate::bytecode::{Compiler, VM};
-use crate::common::ast;
-use crate::parser::{Parser, Resolver};
-use crate::treewalk::Interpreter;
+use crate::frontend::ast;
+use crate::frontend::Parser;
+use crate::treewalk::{Interpreter, Resolver};
 
 use io::Write;
 use std::{env, fs, io, process};
@@ -9,9 +9,7 @@ use std::{env, fs, io, process};
 const USE_BYTECODE_INTERPRETER: bool = true;
 
 mod bytecode;
-mod common;
-mod lexer;
-mod parser;
+mod frontend;
 mod treewalk;
 
 type RunResult = Result<(), String>;

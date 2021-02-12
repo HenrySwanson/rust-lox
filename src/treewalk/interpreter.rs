@@ -1,12 +1,12 @@
 use super::builtins::get_builtins;
 use super::class::LoxClassPtr;
+use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
 use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
 use super::object::Object;
 
-use crate::common::ast;
-use crate::common::constants::{INIT_STR, SUPER_STR, THIS_STR};
+use crate::frontend::ast;
 
 use std::collections::HashMap;
 

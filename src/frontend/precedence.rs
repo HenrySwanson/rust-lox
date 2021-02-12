@@ -1,5 +1,5 @@
-use crate::common::ast::{BinaryOperator, LogicalOperator};
-use crate::common::token::Token;
+use super::ast::{BinaryOperator, LogicalOperator};
+use super::token::Token;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfixOperator {

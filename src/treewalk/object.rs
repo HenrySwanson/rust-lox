@@ -4,7 +4,7 @@ use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
 use super::interpreter::Interpreter;
 
-use crate::common::ast::{BinaryOperator, UnaryOperator};
+use crate::frontend::ast::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Object {
