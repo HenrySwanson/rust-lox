@@ -28,23 +28,27 @@ impl<'src> Parser<'src> {
         };
 
         // "Prime the pump" and return
-        parser.bump();
+        parser.bump().unwrap();
         parser
     }
 
     // ---- Simple token-based operations ----
 
     /// Advances the stream by one token
-    fn bump(&mut self) {
+    fn bump(&mut self) -> ParseResult<()> {
         // No-clone trick: swap current into previous, replace current
         std::mem::swap(&mut self.previous, &mut self.current);
         self.current = self.lexer.next_token();
 
-        // TODO: is this where i handle error tokens?
+        if let Token::Error(e) = &self.current.token {
+            Err(Error::IllegalToken(self.current.span.clone(), e.clone()))
+        } else {
+            Ok(())
+        }
     }
 
     /// Checks whether or not the current token matches the given token
-    fn check(&mut self, t: Token) -> bool {
+    fn check(&self, t: Token) -> bool {
         self.current.token == t
     }
 
@@ -52,7 +56,7 @@ impl<'src> Parser<'src> {
     /// and if so, consumes it, returning true.
     fn try_eat(&mut self, t: Token) -> bool {
         if self.check(t) {
-            self.bump();
+            self.bump().expect("Why are you matching error tokens???");
             true
         } else {
             false
@@ -61,7 +65,7 @@ impl<'src> Parser<'src> {
 
     /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token) -> ParseResult<()> {
-        self.bump();
+        self.bump()?;
 
         if self.previous.token == expected {
             Ok(())
@@ -78,19 +82,44 @@ impl<'src> Parser<'src> {
 
     pub fn parse_all(mut self) -> Result<ast::Tree, Vec<Error>> {
         let mut stmts = vec![];
+        let mut errors = vec![];
 
         while !self.check(Token::EndOfFile) {
             let result = self.parse_spanned_declaration();
 
-            // TODO: synchronize here
             match result {
                 Ok(stmt) => stmts.push(stmt),
-                Err(e) => return Err(vec![e]),
+                Err(e) => {
+                    errors.push(e);
+                    self.synchronize(&mut errors);
+                }
             }
-            
         }
 
-        Ok(ast::Tree{statements: stmts})
+        if errors.is_empty() {
+            Ok(ast::Tree { statements: stmts })
+        } else {
+            Err(errors)
+        }
+    }
+
+    fn synchronize(&mut self, errors: &mut Vec<Error>) {
+        // Consume until we see a semicolon or EOF
+        let mut synchronization_point = false;
+
+        while !synchronization_point {
+            let current_token = &self.current.token;
+
+            if matches!(current_token, Token::Semicolon | Token::EndOfFile) {
+                synchronization_point = true;
+            }
+
+            // Always consume the token
+            match self.bump() {
+                                Ok(_) => {}
+                Err(e) => errors.push(e),
+            }
+        }
     }
 
     fn parse_spanned_declaration(&mut self) -> ParseResult<ast::Stmt> {
@@ -107,7 +136,7 @@ impl<'src> Parser<'src> {
     fn parse_declaration_nospan(&mut self) -> ParseResult<ast::StmtKind> {
         match self.current.token {
             Token::Var => {
-                self.bump();
+                self.bump()?;
                 let name = self.parse_identifier()?;
                 let expr = if self.try_eat(Token::Equals) {
                     self.parse_expression()?
@@ -180,7 +209,7 @@ impl<'src> Parser<'src> {
     fn parse_statement_nospan(&mut self) -> ParseResult<ast::StmtKind> {
         match self.current.token {
             Token::Print => {
-                self.bump();
+                self.bump()?;
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
                 Ok(ast::StmtKind::Print(expr))
@@ -328,7 +357,7 @@ impl<'src> Parser<'src> {
         let mut lhs = match prefix_op {
             Some(op) => {
                 let lo = self.current.span;
-                self.bump();
+                self.bump()?;
                 let expr = self.pratt_parse(Precedence::Unary)?;
                 mk_expr(
                     ast::ExprKind::UnaryOp(op, Box::new(expr)),
@@ -351,7 +380,7 @@ impl<'src> Parser<'src> {
             // (for Call, we call parse_fn_args later, we shouldn't consume the
             // left parenthesis. This is gross though. :\ TODO: fix)
             if op != InfixOperator::Call {
-                self.bump();
+                self.bump()?;
             }
 
             // Stash some Copy variables for later
@@ -404,7 +433,7 @@ impl<'src> Parser<'src> {
 
     fn parse_primary(&mut self) -> ParseResult<ast::Expr> {
         // Consume a token
-        self.bump();
+        self.bump()?;
 
         let lo = self.previous.span;
 
@@ -441,7 +470,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_identifier(&mut self) -> ParseResult<String> {
-        self.bump();
+        self.bump()?;
         match &self.previous.token {
             Token::Identifier(name) => Ok(name.to_owned()),
             _ => Err(Error::ExpectedIdentifier(self.previous.span)),

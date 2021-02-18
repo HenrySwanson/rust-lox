@@ -1,0 +1,19 @@
+// Two syntax errors
+print a;
+print ;
+print b;
+print ;
+print c;
+
+// One error
+print (1 + 2 - 3 * * 10);
+print a;
+
+// One error
+a.x = 1;
+a.y() = 2;
+a.z().w = 3;
+
+// Three errors
+var a = 4 & 4;
+var b = 4 $ 3 @ 2 + + +;
