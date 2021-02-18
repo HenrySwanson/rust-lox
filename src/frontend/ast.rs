@@ -4,6 +4,10 @@ use super::span::Span;
 
 // TODO: add declaration: variable/class/fn decl, or regular statement
 
+pub struct Tree {
+    pub statements: Vec<Stmt>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Stmt {
     pub kind: StmtKind,

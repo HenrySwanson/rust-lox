@@ -1,10 +1,9 @@
 use super::ast;
+use super::errs::{Error, ParseResult, MAX_NUMBER_ARGS};
 use super::lexer::Lexer;
 use super::precedence::{InfixOperator, Precedence};
 use super::span::Span;
 use super::token::{SpannedToken, Token};
-
-const MAX_NUMBER_ARGS: usize = 256;
 
 pub struct Parser<'a> {
     source: &'a str,
@@ -13,17 +12,6 @@ pub struct Parser<'a> {
     current: SpannedToken,  // first unconsumed token
     previous: SpannedToken, // last consumed token
 }
-
-#[derive(Debug)]
-pub enum Error {
-    ExpectedTokenAt(Token, Span, Token),
-    ExpectedExprAt(Span, Token),
-    ExpectedIdentifier(Span),
-    ExpectedLValue(Span),
-    TooManyArgs(Span),
-}
-
-pub type ParseResult<T> = Result<T, Error>;
 
 impl<'src> Parser<'src> {
     pub fn new(source: &'src str) -> Self {
@@ -88,16 +76,21 @@ impl<'src> Parser<'src> {
 
     // ---- parsing methods ----
 
-    pub fn parse_all(mut self) -> Vec<ParseResult<ast::Stmt>> {
+    pub fn parse_all(mut self) -> Result<ast::Tree, Vec<Error>> {
         let mut stmts = vec![];
 
         while !self.check(Token::EndOfFile) {
-            let stmt = self.parse_spanned_declaration();
+            let result = self.parse_spanned_declaration();
+
             // TODO: synchronize here
-            stmts.push(stmt);
+            match result {
+                Ok(stmt) => stmts.push(stmt),
+                Err(e) => return Err(vec![e]),
+            }
+            
         }
 
-        stmts
+        Ok(ast::Tree{statements: stmts})
     }
 
     fn parse_spanned_declaration(&mut self) -> ParseResult<ast::Stmt> {

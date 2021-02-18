@@ -6,11 +6,11 @@ use crate::treewalk::{Interpreter, Resolver};
 use io::Write;
 use std::{env, fs, io, process};
 
-const USE_BYTECODE_INTERPRETER: bool = true;
-
 mod bytecode;
 mod frontend;
 mod treewalk;
+
+const USE_BYTECODE_INTERPRETER: bool = true;
 
 type RunResult = Result<(), String>;
 
@@ -24,16 +24,16 @@ fn main() {
     };
 
     match args.len() {
-        1 => run_prompt(interpreter),
-        2 => run_file(interpreter, &args[1]),
+        1 => run_from_prompt(interpreter),
+        2 => run_from_file(interpreter, &args[1]),
         _ => {
             eprintln!("Usage: rlox [script]");
             process::exit(64);
         }
-    }
+    };
 }
 
-fn run_prompt(mut interpreter: Box<dyn Runnable>) {
+fn run_from_prompt(mut interpreter: Box<dyn Runnable>) {
     loop {
         let mut input = String::new();
         print!("> ");
@@ -52,42 +52,31 @@ fn run_prompt(mut interpreter: Box<dyn Runnable>) {
             print!("  ");
         }
 
-        match run(interpreter.as_mut(), &input) {
+        run(interpreter.as_mut(), input);
+    }
+}
+
+fn run_from_file(mut interpreter: Box<dyn Runnable>, filename: &str) {
+    let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
+    run(interpreter.as_mut(), contents);
+}
+
+fn run(interpreter: &mut dyn Runnable, source: String) {
+    // Parse the input
+
+    let parser = Parser::new(&source);
+    match parser.parse_all() {
+        Ok(tree) => match interpreter.consume_statements(tree.statements) {
             Ok(_) => {}
-            Err(e) => report_error(&e),
+            Err(e) => eprintln!("{:?}", e),
+        },
+        Err(errors) => {
+            eprintln!("Parse errors:");
+            for e in errors {
+                eprintln!("{}", e)
+            }
         }
     }
-}
-
-fn run_file(mut interpreter: Box<dyn Runnable>, filename: &str) {
-    let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
-
-    match run(interpreter.as_mut(), &contents) {
-        Ok(_) => {}
-        Err(e) => report_error(&e),
-    }
-}
-
-fn run(interpreter: &mut dyn Runnable, source: &str) -> RunResult {
-    // Parse the input
-    let parser = Parser::new(source);
-    let statements: Vec<_> = parser.parse_all();
-
-    // Print the AST
-    // for s in statements.iter() {
-    //     println!("{:?}", s);
-    // }
-
-    let statements: Vec<_> = match statements.into_iter().collect() {
-        Ok(statements) => statements,
-        Err(e) => return Err(format!("{:?}", e)),
-    };
-
-    interpreter.consume_statements(statements)
-}
-
-fn report_error(err_msg: &str) {
-    eprintln!("An error: {}", err_msg);
 }
 
 trait Runnable {
