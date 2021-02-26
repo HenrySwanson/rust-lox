@@ -1,3 +1,4 @@
+use super::ast;
 use super::builtins::get_builtins;
 use super::class::LoxClassPtr;
 use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
@@ -5,8 +6,6 @@ use super::environment::Environment;
 use super::errs::{Error, RuntimeResult};
 use super::function::LoxFunctionPtr;
 use super::object::Object;
-
-use crate::frontend::ast;
 
 use std::collections::HashMap;
 
@@ -160,8 +159,8 @@ impl Interpreter {
             ast::ExprKind::Assignment(var, expr) => {
                 let value = self.eval_expression(expr)?;
                 match var.hops {
-                    Some(hops) => self.env.set_at(hops, &var.name, value.clone())?,
-                    None => self.globals.set(&var.name, value.clone())?,
+                    ast::VHops::Local(hops) => self.env.set_at(hops, &var.name, value.clone())?,
+                    ast::VHops::Global => self.globals.set(&var.name, value.clone())?,
                 }
                 Ok(value)
             }
@@ -180,7 +179,10 @@ impl Interpreter {
                 };
 
                 let err_msg = "relationship between super and this broken";
-                let this_depth = var.hops.expect(err_msg).checked_sub(1).expect(err_msg);
+                let this_depth = match var.hops {
+                    ast::VHops::Global => panic!(err_msg),
+                    ast::VHops::Local(hops) => hops - 1,
+                };
                 let this = self.env.get_at(this_depth, THIS_STR).expect(err_msg);
                 match superclass.find_method(method_name) {
                     Some(method) => Ok(Object::LoxFunction(method.bind(this))),
@@ -281,8 +283,8 @@ impl Interpreter {
 
     fn lookup_local_var(&self, var: &ast::VariableRef) -> RuntimeResult<Object> {
         match var.hops {
-            Some(hops) => self.env.get_at(hops, &var.name),
-            None => self.globals.get(&var.name),
+            ast::VHops::Local(hops) => self.env.get_at(hops, &var.name),
+            ast::VHops::Global => self.globals.get(&var.name),
         }
     }
 }

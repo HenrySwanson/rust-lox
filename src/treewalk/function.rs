@@ -4,7 +4,7 @@ use super::errs::{Error, RuntimeResult};
 use super::interpreter::Interpreter;
 use super::object::Object;
 
-use crate::frontend::ast;
+use super::ast;
 
 use std::fmt;
 use std::rc::Rc;

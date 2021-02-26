@@ -4,6 +4,7 @@ use super::span::Span;
 
 // TODO: add declaration: variable/class/fn decl, or regular statement
 
+#[derive(Debug)]
 pub struct Tree {
     pub statements: Vec<Stmt>,
 }

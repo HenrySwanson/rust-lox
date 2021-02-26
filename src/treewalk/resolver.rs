@@ -1,6 +1,7 @@
+use super::ast;
 use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
 
-use crate::frontend::ast;
+use crate::frontend::ast as frontend_ast;
 
 use std::collections::HashMap;
 
@@ -55,70 +56,98 @@ impl Resolver {
         }
     }
 
-    pub fn resolve_root(&mut self, stmt: &mut ast::Stmt) -> ResolveResult<()> {
-        self.scopes = vec![];
-        self.resolve_statement(stmt)
+    pub fn resolve(mut self, tree: frontend_ast::Tree) -> ResolveResult<ast::Tree> {
+        let mut statements = vec![];
+        for stmt in tree.statements.iter() {
+            // TODO like parser, collect errors and report many
+            statements.push(self.resolve_statement(stmt)?);
+        }
+
+        Ok(ast::Tree { statements })
     }
 
-    fn resolve_statement(&mut self, stmt: &mut ast::Stmt) -> ResolveResult<()> {
-        match &mut stmt.kind {
-            ast::StmtKind::Expression(expr) => self.resolve_expression(expr)?,
-            ast::StmtKind::Print(expr) => self.resolve_expression(expr)?,
-            ast::StmtKind::VariableDecl(name, expr) => {
+    fn resolve_statement(&mut self, stmt: &frontend_ast::Stmt) -> ResolveResult<ast::Stmt> {
+        let kind = match &stmt.kind {
+            frontend_ast::StmtKind::Expression(expr) => {
+                ast::StmtKind::Expression(self.resolve_expression(expr)?)
+            }
+            frontend_ast::StmtKind::Print(expr) => {
+                ast::StmtKind::Print(self.resolve_expression(expr)?)
+            }
+            frontend_ast::StmtKind::VariableDecl(name, expr) => {
                 // Declare, resolve, define
                 if self.is_already_defined(&name) {
                     return Err(Error::RedefineLocalVar(name.to_owned()));
                 }
 
                 self.declare(name);
-                self.resolve_expression(expr)?;
+                let expr = self.resolve_expression(expr)?;
                 self.define(name);
+                ast::StmtKind::VariableDecl(name.clone(), expr)
             }
-            ast::StmtKind::Block(stmts) => {
+            frontend_ast::StmtKind::Block(stmts) => {
                 self.push_scope();
-                for stmt in stmts.iter_mut() {
-                    self.resolve_statement(stmt)?;
+
+                let mut resolved_stmts = Vec::with_capacity(stmts.len());
+                for stmt in stmts.iter() {
+                    resolved_stmts.push(self.resolve_statement(stmt)?);
                 }
+
                 self.pop_scope();
+                ast::StmtKind::Block(resolved_stmts)
             }
-            ast::StmtKind::IfElse(cond, body, else_body) => {
-                self.resolve_expression(cond)?;
-                self.resolve_statement(body)?;
-                if let Some(else_body) = else_body {
-                    self.resolve_statement(else_body)?
-                }
+            frontend_ast::StmtKind::IfElse(cond, body, else_body) => {
+                let cond = self.resolve_expression(cond)?;
+                let body = Box::new(self.resolve_statement(body.as_ref())?);
+                let else_body = match else_body {
+                    Some(s) => Some(Box::new(self.resolve_statement(s)?)),
+                    None => None,
+                };
+                ast::StmtKind::IfElse(cond, body, else_body)
             }
-            ast::StmtKind::While(cond, body) => {
-                self.resolve_expression(cond)?;
-                self.resolve_statement(body)?;
+            frontend_ast::StmtKind::While(cond, body) => {
+                let cond = self.resolve_expression(cond)?;
+                let body = Box::new(self.resolve_statement(body)?);
+                ast::StmtKind::While(cond, body)
             }
-            ast::StmtKind::FunctionDecl(fn_data) => {
-                self.resolve_function(fn_data, FunctionContext::Function)?
+            frontend_ast::StmtKind::FunctionDecl(fn_data) => {
+                let fn_data = self.resolve_function(fn_data, FunctionContext::Function)?;
+                ast::StmtKind::FunctionDecl(fn_data)
             }
-            ast::StmtKind::Return(expr) => {
-                if self.function_ctx == FunctionContext::Global {
-                    return Err(Error::ReturnAtTopLevel);
-                }
+            frontend_ast::StmtKind::Return(expr) => {
+                let return_expr = match self.function_ctx {
+                    // Returns not allowed outside functions
+                    FunctionContext::Global => return Err(Error::ReturnAtTopLevel),
+                    // Returns in initializers are a little different. They _need_ to be
+                    // empty returns, and unlike normal empty returns, they return `this`
+                    // instead of `nil`.
+                    FunctionContext::Initializer => match expr {
+                        Some(_) => return Err(Error::ReturnInInitializer),
+                        None => None, // TODO you have to resolve `This`!
+                    },
+                    // Functions and methods are easy, just replace empty returns with `return nil`.
+                    _ => match expr {
+                        Some(expr) => Some(self.resolve_expression(expr)?),
+                        None => None, // TODO replace with `nil`!
+                    },
+                };
 
-                if self.function_ctx == FunctionContext::Initializer && expr.is_some() {
-                    return Err(Error::ReturnInInitializer);
-                }
-
-                if let Some(expr) = expr {
-                    self.resolve_expression(expr)?;
-                }
+                ast::StmtKind::Return(return_expr)
             }
-            ast::StmtKind::ClassDecl(name, superclass, methods) => {
+            frontend_ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 // Define the class in the current scope
                 self.define(&name);
 
                 // Resolve the superclass if it exists
-                if let Some(superclass) = superclass {
-                    if superclass.name == **name {
-                        return Err(Error::InheritFromSelf);
+                let resolved_superclass = match superclass {
+                    Some(superclass) => {
+                        if superclass.name == **name {
+                            return Err(Error::InheritFromSelf);
+                        }
+                        Some(self.resolve_variable(&superclass.name))
                     }
-                    self.resolve_local_variable(superclass);
-                }
+                    None => None,
+                };
 
                 // If applicable, begin a new scope, defining super
                 if superclass.is_some() {
@@ -138,14 +167,14 @@ impl Resolver {
                     ClassContext::Class
                 };
 
-                for method_data in methods.iter_mut() {
-                    // TODO move initializer detection to the parser?
-                    let ctx = if method_data.name == INIT_STR {
+                let mut resolved_methods = Vec::with_capacity(methods.len());
+                for method_data in methods.iter() {
+                    let function_ctx = if method_data.name == INIT_STR {
                         FunctionContext::Initializer
                     } else {
                         FunctionContext::Method
                     };
-                    self.resolve_function(method_data, ctx)?;
+                    resolved_methods.push(self.resolve_function(method_data, function_ctx)?);
                 }
 
                 // Restore everything
@@ -154,68 +183,88 @@ impl Resolver {
                 if superclass.is_some() {
                     self.pop_scope();
                 }
+
+                ast::StmtKind::ClassDecl(name.clone(), resolved_superclass, resolved_methods)
             }
-        }
-        Ok(())
+        };
+
+        Ok(ast::Stmt {
+            kind,
+            span: stmt.span.clone(),
+        })
     }
 
-    fn resolve_expression(&mut self, expr: &mut ast::Expr) -> ResolveResult<()> {
-        match &mut expr.kind {
-            ast::ExprKind::Literal(_) => (),
-            ast::ExprKind::BinOp(_, lhs, rhs) => {
-                self.resolve_expression(lhs)?;
-                self.resolve_expression(rhs)?;
+    fn resolve_expression(&mut self, expr: &frontend_ast::Expr) -> ResolveResult<ast::Expr> {
+        let kind = match &expr.kind {
+            frontend_ast::ExprKind::Literal(lit) => ast::ExprKind::Literal(lit.clone()),
+            frontend_ast::ExprKind::BinOp(op, lhs, rhs) => {
+                let lhs = Box::new(self.resolve_expression(lhs)?);
+                let rhs = Box::new(self.resolve_expression(rhs)?);
+                ast::ExprKind::BinOp(*op, lhs, rhs)
             }
-            ast::ExprKind::UnaryOp(_, subexpr) => self.resolve_expression(subexpr)?,
-            ast::ExprKind::Logical(_, lhs, rhs) => {
-                self.resolve_expression(lhs)?;
-                self.resolve_expression(rhs)?;
+            frontend_ast::ExprKind::UnaryOp(op, subexpr) => {
+                let subexpr = Box::new(self.resolve_expression(subexpr)?);
+                ast::ExprKind::UnaryOp(*op, subexpr)
             }
-            ast::ExprKind::Variable(var) => {
+            frontend_ast::ExprKind::Logical(op, lhs, rhs) => {
+                let lhs = Box::new(self.resolve_expression(lhs)?);
+                let rhs = Box::new(self.resolve_expression(rhs)?);
+                ast::ExprKind::Logical(*op, lhs, rhs)
+            }
+            frontend_ast::ExprKind::Variable(var) => {
                 // Check if we're in the middle of initializing ourselves
                 if self.is_during_initializer(&var.name) {
                     return Err(Error::UsedInOwnInitializer(var.name.to_owned()));
                 }
-                self.resolve_local_variable(var);
+                ast::ExprKind::Variable(self.resolve_variable(&var.name))
             }
-            ast::ExprKind::Assignment(var, subexpr) => {
-                self.resolve_expression(subexpr)?;
-                self.resolve_local_variable(var);
+            frontend_ast::ExprKind::Assignment(var, subexpr) => {
+                let var = self.resolve_variable(&var.name);
+                let subexpr = Box::new(self.resolve_expression(subexpr)?);
+                ast::ExprKind::Assignment(var, subexpr)
             }
-            ast::ExprKind::Call(callee, arg_exprs) => {
-                self.resolve_expression(callee)?;
-                for a in arg_exprs.iter_mut() {
-                    self.resolve_expression(a)?;
-                }
+            frontend_ast::ExprKind::Call(callee, arg_exprs) => {
+                let callee = Box::new(self.resolve_expression(callee)?);
+                let arg_exprs: Result<Vec<_>, _> = arg_exprs
+                    .iter()
+                    .map(|e| self.resolve_expression(e))
+                    .collect();
+                ast::ExprKind::Call(callee, arg_exprs?)
             }
-            ast::ExprKind::Get(subexpr, _) => {
-                self.resolve_expression(subexpr)?;
+            frontend_ast::ExprKind::Get(subexpr, property) => {
+                let subexpr = Box::new(self.resolve_expression(subexpr)?);
+                ast::ExprKind::Get(subexpr, property.clone())
             }
-            ast::ExprKind::Set(subexpr, _, value) => {
-                self.resolve_expression(subexpr)?;
-                self.resolve_expression(value)?;
+            frontend_ast::ExprKind::Set(subexpr, property, value) => {
+                let subexpr = Box::new(self.resolve_expression(subexpr)?);
+                let value = Box::new(self.resolve_expression(value)?);
+                ast::ExprKind::Set(subexpr, property.clone(), value)
             }
-            ast::ExprKind::This(var) => {
+            frontend_ast::ExprKind::This(var) => {
                 if self.class_ctx == ClassContext::Global {
                     return Err(Error::ThisOutsideClass);
                 }
-                self.resolve_local_variable(var);
+                ast::ExprKind::This(self.resolve_variable(&var.name))
             }
-            ast::ExprKind::Super(var, _) => {
+            frontend_ast::ExprKind::Super(var, method_name) => {
                 if self.class_ctx != ClassContext::Subclass {
                     return Err(Error::SuperOutsideSubclass);
                 }
-                self.resolve_local_variable(var);
+                ast::ExprKind::Super(self.resolve_variable(&var.name), method_name.clone())
             }
-        }
-        Ok(())
-    }
+        };
 
+        Ok(ast::Expr {
+            kind,
+            span: expr.span.clone(),
+        })
+    }
+    // TODO we could just implement this as a method on the ast components
     fn resolve_function(
         &mut self,
-        fn_data: &mut ast::FunctionDecl,
+        fn_data: &frontend_ast::FunctionDecl,
         ctx: FunctionContext,
-    ) -> ResolveResult<()> {
+    ) -> ResolveResult<ast::FunctionDecl> {
         // Define eagerly, so that the function can refer to itself recursively.
         self.define(&fn_data.name);
 
@@ -230,13 +279,24 @@ impl Resolver {
             self.define(name);
         }
 
-        self.resolve_statement(&mut fn_data.body)?;
+        let resolved_body = Box::new(self.resolve_statement(&fn_data.body)?);
 
         // Reverse the previous steps
         self.function_ctx = prev_ctx;
         self.pop_scope();
 
-        Ok(())
+        Ok(ast::FunctionDecl {
+            name: fn_data.name.clone(),
+            params: fn_data.params.clone(),
+            body: resolved_body,
+        })
+    }
+
+    fn resolve_variable(&self, name: &str) -> ast::VariableRef {
+        ast::VariableRef {
+            name: name.to_owned(),
+            hops: self.lookup_variable(name),
+        }
     }
 
     // Returns true if we're in the middle of initializing variable `name`.
@@ -253,14 +313,13 @@ impl Resolver {
         }
     }
 
-    fn resolve_local_variable(&self, var: &mut ast::VariableRef) {
+    fn lookup_variable(&self, name: &str) -> ast::VHops {
         for (i, scope) in self.scopes.iter().rev().enumerate() {
-            if scope.contains_key(&var.name) {
-                var.hops = Some(i);
-                return;
+            if scope.contains_key(name) {
+                return ast::VHops::Local(i);
             }
         }
-        // TODO do i want to use None for globals?
+        ast::VHops::Global
     }
 
     fn push_scope(&mut self) {

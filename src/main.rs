@@ -10,7 +10,7 @@ mod bytecode;
 mod frontend;
 mod treewalk;
 
-const USE_BYTECODE_INTERPRETER: bool = true;
+const USE_BYTECODE_INTERPRETER: bool = false;
 
 type RunResult = Result<(), String>;
 
@@ -84,15 +84,13 @@ trait Runnable {
 }
 
 impl Runnable for Interpreter {
-    fn consume(&mut self, mut tree: ast::Tree) -> RunResult {
+    fn consume(&mut self, tree: ast::Tree) -> RunResult {
         // Resolve variable references
-        let mut resolver = Resolver::new();
-        for s in tree.statements.iter_mut() {
-            match resolver.resolve_root(s) {
-                Ok(_) => (),
-                Err(e) => return Err(format!("{:?}", e)),
-            }
-        }
+        let resolver = Resolver::new();
+        let tree = match resolver.resolve(tree) {
+            Ok(t) => t,
+            Err(e) => return Err(format!("{:?}", e)),
+        };
 
         // And evaluate the statements
         match self.eval_statements(tree.statements) {

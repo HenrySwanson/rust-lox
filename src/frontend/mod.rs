@@ -4,7 +4,7 @@ mod errs;
 mod lexer;
 mod parser;
 mod precedence;
-mod span;
+pub mod span;
 mod token;
 
 pub use lexer::Lexer;
