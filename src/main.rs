@@ -66,7 +66,7 @@ fn run(interpreter: &mut dyn Runnable, source: String) {
 
     let parser = Parser::new(&source);
     match parser.parse_all() {
-        Ok(tree) => match interpreter.consume_statements(tree.statements) {
+        Ok(tree) => match interpreter.consume(tree) {
             Ok(_) => {}
             Err(e) => eprintln!("{:?}", e),
         },
@@ -80,14 +80,14 @@ fn run(interpreter: &mut dyn Runnable, source: String) {
 }
 
 trait Runnable {
-    fn consume_statements(&mut self, stmts: Vec<ast::Stmt>) -> RunResult;
+    fn consume(&mut self, tree: ast::Tree) -> RunResult;
 }
 
 impl Runnable for Interpreter {
-    fn consume_statements(&mut self, mut stmts: Vec<ast::Stmt>) -> RunResult {
+    fn consume(&mut self, mut tree: ast::Tree) -> RunResult {
         // Resolve variable references
         let mut resolver = Resolver::new();
-        for s in stmts.iter_mut() {
+        for s in tree.statements.iter_mut() {
             match resolver.resolve_root(s) {
                 Ok(_) => (),
                 Err(e) => return Err(format!("{:?}", e)),
@@ -95,7 +95,7 @@ impl Runnable for Interpreter {
         }
 
         // And evaluate the statements
-        match self.eval_statements(stmts) {
+        match self.eval_statements(tree.statements) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("{:?}", e)),
         }
@@ -103,11 +103,11 @@ impl Runnable for Interpreter {
 }
 
 impl Runnable for VM {
-    fn consume_statements(&mut self, stmts: Vec<ast::Stmt>) -> RunResult {
+    fn consume(&mut self, tree: ast::Tree) -> RunResult {
         // Compile the AST
         let mut compiler = Compiler::new(self.borrow_string_table());
 
-        let main_fn = match compiler.compile(&stmts) {
+        let main_fn = match compiler.compile(&tree.statements) {
             Ok(main_fn) => main_fn,
             Err(e) => return Err(format!("{:?}", e)),
         };

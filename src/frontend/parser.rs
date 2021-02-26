@@ -116,7 +116,7 @@ impl<'src> Parser<'src> {
 
             // Always consume the token
             match self.bump() {
-                                Ok(_) => {}
+                Ok(_) => {}
                 Err(e) => errors.push(e),
             }
         }
