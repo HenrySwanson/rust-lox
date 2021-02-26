@@ -151,10 +151,10 @@ impl Resolver {
                 // Resolve the superclass if it exists
                 let resolved_superclass = match superclass {
                     Some(superclass) => {
-                        if superclass.name == **name {
+                        if superclass == name {
                             return Err(Error::InheritFromSelf);
                         }
-                        Some(self.resolve_variable(&superclass.name))
+                        Some(self.resolve_variable(&superclass))
                     }
                     None => None,
                 };
@@ -223,13 +223,13 @@ impl Resolver {
             }
             frontend_ast::ExprKind::Variable(var) => {
                 // Check if we're in the middle of initializing ourselves
-                if self.is_during_initializer(&var.name) {
-                    return Err(Error::UsedInOwnInitializer(var.name.to_owned()));
+                if self.is_during_initializer(&var) {
+                    return Err(Error::UsedInOwnInitializer(var.to_owned()));
                 }
-                ast::ExprKind::Variable(self.resolve_variable(&var.name))
+                ast::ExprKind::Variable(self.resolve_variable(&var))
             }
             frontend_ast::ExprKind::Assignment(var, subexpr) => {
-                let var = self.resolve_variable(&var.name);
+                let var = self.resolve_variable(&var);
                 let subexpr = Box::new(self.resolve_expression(subexpr)?);
                 ast::ExprKind::Assignment(var, subexpr)
             }
@@ -250,17 +250,17 @@ impl Resolver {
                 let value = Box::new(self.resolve_expression(value)?);
                 ast::ExprKind::Set(subexpr, property.clone(), value)
             }
-            frontend_ast::ExprKind::This(var) => {
+            frontend_ast::ExprKind::This => {
                 if self.class_ctx == ClassContext::Global {
                     return Err(Error::ThisOutsideClass);
                 }
-                ast::ExprKind::This(self.resolve_variable(&var.name))
+                ast::ExprKind::This(self.resolve_variable(THIS_STR))
             }
-            frontend_ast::ExprKind::Super(var, method_name) => {
+            frontend_ast::ExprKind::Super(method_name) => {
                 if self.class_ctx != ClassContext::Subclass {
                     return Err(Error::SuperOutsideSubclass);
                 }
-                ast::ExprKind::Super(self.resolve_variable(&var.name), method_name.clone())
+                ast::ExprKind::Super(self.resolve_variable(SUPER_STR), method_name.clone())
             }
         };
 

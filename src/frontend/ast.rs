@@ -25,7 +25,7 @@ pub enum StmtKind {
     While(Expr, Box<Stmt>),
     FunctionDecl(FunctionDecl),
     Return(Option<Expr>),
-    ClassDecl(String, Option<VariableRef>, Vec<FunctionDecl>),
+    ClassDecl(String, Option<String>, Vec<FunctionDecl>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -40,13 +40,13 @@ pub enum ExprKind {
     BinOp(BinaryOperator, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryOperator, Box<Expr>),
     Logical(LogicalOperator, Box<Expr>, Box<Expr>),
-    Variable(VariableRef),
-    Assignment(VariableRef, Box<Expr>),
+    Variable(String),
+    Assignment(String, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Get(Box<Expr>, String),
     Set(Box<Expr>, String, Box<Expr>),
-    This(VariableRef),
-    Super(VariableRef, String),
+    This,
+    Super(String),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -55,12 +55,6 @@ pub enum Literal {
     Boolean(bool),
     Str(String),
     Nil,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct VariableRef {
-    pub name: String,
-    pub hops: Option<usize>, // used by the resolver
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -133,9 +127,9 @@ impl Expr {
                 lhs.lispy_string(),
                 rhs.lispy_string()
             ),
-            ExprKind::Variable(var) => var.name.clone(),
+            ExprKind::Variable(var) => var.clone(),
             ExprKind::Assignment(var, expr) => {
-                format!("(set {} {})", var.name, expr.lispy_string())
+                format!("(set {} {})", var, expr.lispy_string())
             }
             ExprKind::Call(callee, args) => {
                 let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();
@@ -148,15 +142,9 @@ impl Expr {
                 property,
                 value.lispy_string()
             ),
-            ExprKind::This(_) => String::from("this"),
-            ExprKind::Super(_, method_name) => format!("(super {})", method_name),
+            ExprKind::This => String::from("this"),
+            ExprKind::Super(method_name) => format!("(super {})", method_name),
         }
-    }
-}
-
-impl VariableRef {
-    pub fn new(name: String) -> Self {
-        VariableRef { name, hops: None }
     }
 }
 

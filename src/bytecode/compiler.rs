@@ -220,7 +220,7 @@ impl<'strtable> Compiler<'strtable> {
                 // If there's a superclass, load it in the next local slot.
                 // Whether or not there is, the class goes on the stack next.
                 if let Some(superclass) = superclass {
-                    if superclass.name == *name {
+                    if superclass == name {
                         todo!();
                     }
 
@@ -228,7 +228,7 @@ impl<'strtable> Compiler<'strtable> {
                     self.declare_variable(SUPER_STR)?;
                     self.define_variable(SUPER_STR, line_no)?;
 
-                    self.get_variable(&superclass.name, line_no)?;
+                    self.get_variable(&superclass, line_no)?;
                     self.get_variable(name, line_no)?;
                     self.emit_op(RichOpcode::Inherit, line_no);
                 } else {
@@ -374,8 +374,8 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no),
             ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
             ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
-            ast::ExprKind::Variable(var) => self.get_variable(&var.name, line_no)?,
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(&var.name, expr, line_no)?,
+            ast::ExprKind::Variable(var) => self.get_variable(&var, line_no)?,
+            ast::ExprKind::Assignment(var, expr) => self.set_variable(&var, expr, line_no)?,
             ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
                 self.compile_and(lhs, rhs)?
             }
@@ -394,10 +394,10 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_expression(value_expr)?;
                 self.emit_op(RichOpcode::SetProperty(idx), line_no);
             }
-            ast::ExprKind::This(_) => {
+            ast::ExprKind::This => {
                 self.get_variable(THIS_STR, line_no)?;
             }
-            ast::ExprKind::Super(_, method_name) => {
+            ast::ExprKind::Super(method_name) => {
                 self.get_variable(THIS_STR, line_no)?;
                 self.get_variable(SUPER_STR, line_no)?;
 
@@ -528,7 +528,7 @@ impl<'strtable> Compiler<'strtable> {
 
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
-            ast::ExprKind::Super(_, method_name) => {
+            ast::ExprKind::Super(method_name) => {
                 // We put the reciever on the stack, then all the arguments, then the superclass
                 let line_no = callee.span.lo.line_no;
                 self.get_variable(THIS_STR, line_no)?;

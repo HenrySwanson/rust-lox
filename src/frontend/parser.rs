@@ -179,7 +179,7 @@ impl<'src> Parser<'src> {
         let name = self.parse_identifier()?;
 
         let superclass = if self.try_eat(Token::LeftAngle) {
-            Some(ast::VariableRef::new(self.parse_identifier()?))
+            Some(self.parse_identifier()?)
         } else {
             None
         };
@@ -403,9 +403,7 @@ impl<'src> Parser<'src> {
                     // it's actually an lvalue! So we must convert it into a different
                     // AST node.
                     match lhs.kind {
-                        ast::ExprKind::Variable(var) => {
-                            ast::ExprKind::Assignment(ast::VariableRef::new(var.name), rhs_box)
-                        }
+                        ast::ExprKind::Variable(var) => ast::ExprKind::Assignment(var, rhs_box),
                         ast::ExprKind::Get(expr, property) => {
                             ast::ExprKind::Set(expr, property, rhs_box)
                         }
@@ -445,18 +443,12 @@ impl<'src> Parser<'src> {
             Token::String(s) => from_lit(ast::Literal::Str(s.to_owned())),
             Token::Nil => from_lit(ast::Literal::Nil),
             // Other things
-            Token::Identifier(name) => {
-                ast::ExprKind::Variable(ast::VariableRef::new(name.to_owned()))
-            }
-            Token::This => {
-                let var = ast::VariableRef::new("this".to_owned());
-                ast::ExprKind::This(var)
-            }
+            Token::Identifier(name) => ast::ExprKind::Variable(name.to_owned()),
+            Token::This => ast::ExprKind::This,
             Token::Super => {
-                let var = ast::VariableRef::new("super".to_owned());
                 self.eat(Token::Dot)?;
                 let method_name = self.parse_identifier()?;
-                ast::ExprKind::Super(var, method_name)
+                ast::ExprKind::Super(method_name)
             }
             // Parentheses
             Token::LeftParen => {
