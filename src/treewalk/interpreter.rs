@@ -63,10 +63,7 @@ impl Interpreter {
                 );
             }
             ast::StmtKind::Return(expr) => {
-                let value = match expr {
-                    Some(expr) => self.eval_expression(expr)?,
-                    None => Object::Nil,
-                };
+                let value = self.eval_expression(expr)?;
                 return Err(Error::Return(value));
             }
             ast::StmtKind::ClassDecl(name, superclass_name, method_defs) => {

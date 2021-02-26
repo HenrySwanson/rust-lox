@@ -1,0 +1,32 @@
+class Foo {
+  init() {
+    this.x = 1;
+  }
+}
+
+var foo = Foo();
+print foo.x;
+
+class Bar {
+  init(value) {
+    this.x = value;
+  }
+}
+
+var bar = Bar(5);
+print bar.x;
+
+class Baz {
+  init(value, should_double) {
+    this.x = value;
+
+    if (!should_double) {
+      return;
+    }
+
+    this.x = this.x * 2;
+  }
+}
+
+print Baz(3, true).x;
+print Baz(3, false).x;

@@ -2,6 +2,7 @@ use super::ast;
 use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
 
 use crate::frontend::ast as frontend_ast;
+use crate::frontend::span::Span;
 
 use std::collections::HashMap;
 
@@ -123,12 +124,21 @@ impl Resolver {
                     // instead of `nil`.
                     FunctionContext::Initializer => match expr {
                         Some(_) => return Err(Error::ReturnInInitializer),
-                        None => None, // TODO you have to resolve `This`!
+                        None => ast::Expr {
+                            kind: ast::ExprKind::This(ast::VariableRef {
+                                name: THIS_STR.to_owned(),
+                                hops: self.lookup_variable(THIS_STR),
+                            }),
+                            span: Span::dummy(),
+                        },
                     },
                     // Functions and methods are easy, just replace empty returns with `return nil`.
                     _ => match expr {
-                        Some(expr) => Some(self.resolve_expression(expr)?),
-                        None => None, // TODO replace with `nil`!
+                        Some(expr) => self.resolve_expression(expr)?,
+                        None => ast::Expr {
+                            kind: ast::ExprKind::Literal(ast::Literal::Nil),
+                            span: Span::dummy(),
+                        },
                     },
                 };
 

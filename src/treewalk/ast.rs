@@ -30,7 +30,7 @@ pub enum StmtKind {
     While(Expr, Box<Stmt>),
     // TODO use Rc for this, so it's cloneable
     FunctionDecl(FunctionDecl),
-    Return(Option<Expr>), // TODO replace with just Expr
+    Return(Expr),
     ClassDecl(String, Option<VariableRef>, Vec<FunctionDecl>),
 }
 

@@ -57,19 +57,9 @@ impl LoxFunctionPtr {
             Err(e) => Err(e),
         };
 
+        // Now we return the result, after swapping the env back in
         interpreter.swap_environment(old_env);
-
-        // Now we throw errors, after swapping the env back in
-        let result = result?;
-
-        // Initializers are special kinds of functions, deal with them here
-        if self.0.is_initializer {
-            let this = self.0.closure.get(THIS_STR);
-            let this = this.expect("`this` not found in bound method closure");
-            Ok(this)
-        } else {
-            Ok(result)
-        }
+        result
     }
 
     pub fn bind(&self, instance: Object) -> LoxFunctionPtr {
