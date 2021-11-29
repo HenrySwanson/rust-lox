@@ -32,10 +32,10 @@ impl LoxFunctionPtr {
         self.0.fn_data.params.len()
     }
 
-    pub fn execute_call(
+    pub fn execute_call<W: std::io::Write>(
         &self,
         args: Vec<Object>,
-        interpreter: &mut Interpreter,
+        interpreter: &mut Interpreter<W>,
     ) -> RuntimeResult<Object> {
         if self.arity() != args.len() {
             return Err(Error::WrongArity(self.arity(), args.len()));

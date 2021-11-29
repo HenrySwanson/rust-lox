@@ -48,10 +48,10 @@ impl LoxClassPtr {
         }
     }
 
-    pub fn execute_call(
+    pub fn execute_call<W: std::io::Write>(
         &self,
         args: Vec<Object>,
-        interpreter: &mut Interpreter,
+        interpreter: &mut Interpreter<W>,
     ) -> RuntimeResult<Object> {
         // Check the arity
         if self.arity() != args.len() {

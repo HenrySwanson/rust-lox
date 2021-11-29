@@ -9,13 +9,20 @@ use super::object::Object;
 
 use std::collections::HashMap;
 
-pub struct Interpreter {
+pub struct Interpreter<W> {
     pub env: Environment,
     pub globals: Environment,
+    pub output_sink: W,
 }
 
-impl Interpreter {
+impl Interpreter<std::io::Stdout> {
     pub fn new() -> Self {
+        Interpreter::new_with_output(std::io::stdout())
+    }
+}
+
+impl<W: std::io::Write> Interpreter<W> {
+    pub fn new_with_output(output_sink: W) -> Self {
         let env = Environment::new();
         for builtin in get_builtins().into_iter() {
             let name = builtin.name().to_owned();
@@ -24,7 +31,11 @@ impl Interpreter {
         }
         let globals = env.clone();
 
-        Interpreter { env, globals }
+        Interpreter {
+            env,
+            globals,
+            output_sink,
+        }
     }
 
     pub fn swap_environment(&mut self, mut env: Environment) -> Environment {
@@ -45,7 +56,8 @@ impl Interpreter {
                 self.eval_expression(expr)?;
             }
             ast::StmtKind::Print(expr) => {
-                println!("[out] {:?}", self.eval_expression(expr)?);
+                let value = self.eval_expression(expr)?;
+                writeln!(&mut self.output_sink, "{:?}", value).expect("Unable to write to output");
             }
             ast::StmtKind::IfElse(cond, body, else_body) => {
                 self.eval_if_else(cond, body, else_body.as_deref())?

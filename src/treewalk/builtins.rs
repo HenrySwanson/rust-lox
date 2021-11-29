@@ -28,10 +28,10 @@ impl BuiltInFnPtr {
         &self.0.name
     }
 
-    pub fn execute_call(
+    pub fn execute_call<W: std::io::Write>(
         &self,
         args: Vec<Object>,
-        _interpreter: &mut Interpreter,
+        _interpreter: &mut Interpreter<W>,
     ) -> RuntimeResult<Object> {
         if self.0.arity == args.len() {
             (self.0.func)(args)

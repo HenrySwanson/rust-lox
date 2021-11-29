@@ -3,14 +3,14 @@ use crate::frontend::ast;
 use crate::frontend::Parser;
 use crate::treewalk::{Interpreter, Resolver};
 
-use io::Write;
+use std::io::Write;
 use std::{env, fs, io, process};
 
 mod bytecode;
 mod frontend;
 mod treewalk;
 
-const USE_BYTECODE_INTERPRETER: bool = false;
+const USE_BYTECODE_INTERPRETER: bool = true;
 
 type RunResult = Result<(), String>;
 
@@ -83,7 +83,7 @@ trait Runnable {
     fn consume(&mut self, tree: ast::Tree) -> RunResult;
 }
 
-impl Runnable for Interpreter {
+impl<W: std::io::Write> Runnable for Interpreter<W> {
     fn consume(&mut self, tree: ast::Tree) -> RunResult {
         // Resolve variable references
         let resolver = Resolver::new();
@@ -100,7 +100,7 @@ impl Runnable for Interpreter {
     }
 }
 
-impl Runnable for VM {
+impl<W: std::io::Write> Runnable for VM<W> {
     fn consume(&mut self, tree: ast::Tree) -> RunResult {
         // Compile the AST
         let mut compiler = Compiler::new(self.borrow_string_table());

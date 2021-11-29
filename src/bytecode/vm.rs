@@ -36,7 +36,7 @@ struct ObjectHeap {
     bound_method_heap: GcHeap<LoxBoundMethod>,
 }
 
-pub struct VM {
+pub struct VM<W> {
     // Invocation data
     stack: SafeStack<Value>,
     call_stack: Vec<CallFrame>,
@@ -46,6 +46,9 @@ pub struct VM {
     string_table: StringInterner,
     globals: HashMap<InternedString, Value>,
     object_heap: ObjectHeap,
+
+    // Other
+    output_sink: W,
 }
 
 impl Value {
@@ -207,8 +210,14 @@ impl ObjectHeap {
     }
 }
 
-impl VM {
+impl VM<std::io::Stdout> {
     pub fn new() -> Self {
+        VM::new_with_output(std::io::stdout())
+    }
+}
+
+impl<W: std::io::Write> VM<W> {
+    pub fn new_with_output(output_sink: W) -> Self {
         let mut vm = VM {
             call_stack: vec![],
             stack: SafeStack::new(),
@@ -217,6 +226,8 @@ impl VM {
             string_table: StringInterner::new(),
             globals: HashMap::new(),
             object_heap: ObjectHeap::new(),
+            //
+            output_sink,
         };
 
         // Define natives
@@ -573,7 +584,8 @@ impl VM {
                 }
                 RichOpcode::Print => {
                     let value = self.stack.pop()?;
-                    println!("[out] {:?}", value);
+                    writeln!(&mut self.output_sink, "{:?}", value)
+                        .expect("Unable to write to output");
                 }
                 RichOpcode::Pop => {
                     self.stack.pop()?;

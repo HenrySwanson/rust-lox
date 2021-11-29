@@ -23,10 +23,10 @@ impl Object {
         !matches!(self, Object::Nil | Object::Boolean(false))
     }
 
-    pub fn execute_call(
+    pub fn execute_call<W: std::io::Write>(
         &self,
         args: Vec<Object>,
-        interpreter: &mut Interpreter,
+        interpreter: &mut Interpreter<W>,
     ) -> RuntimeResult<Object> {
         match self {
             Object::BuiltInFunction(builtin) => builtin.execute_call(args, interpreter),
