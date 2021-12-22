@@ -223,3 +223,24 @@ impl UpvalueRef {
         }
     }
 }
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Number(n) => write!(f, "{}", n),
+            Value::Boolean(true) => write!(f, "true"),
+            Value::Boolean(false) => write!(f, "false"),
+            Value::Nil => write!(f, "nil"),
+            Value::String(s) => write!(f, "{}", s),
+            Value::Closure(closure) => write!(f, "<fn {}>", closure.borrow().name),
+            Value::NativeFunction(_) => write!(f, "<native fn>"),
+            Value::Class(class) => write!(f, "{}", class.borrow().name),
+            Value::Instance(instance) => {
+                write!(f, "{} instance", instance.borrow().class.borrow().name)
+            }
+            Value::BoundMethod(method) => {
+                write!(f, "<fn {}>", method.borrow().closure.borrow().name)
+            }
+        }
+    }
+}

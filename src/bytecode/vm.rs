@@ -584,7 +584,7 @@ impl<W: std::io::Write> VM<W> {
                 }
                 RichOpcode::Print => {
                     let value = self.stack.pop()?;
-                    writeln!(&mut self.output_sink, "{:?}", value)
+                    writeln!(&mut self.output_sink, "{}", value)
                         .expect("Unable to write to output");
                 }
                 RichOpcode::Pop => {
