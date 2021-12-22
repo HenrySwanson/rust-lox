@@ -209,9 +209,7 @@ impl<'src> Iterator for LexerIterator<'src> {
 
 #[cfg(test)]
 mod tests {
-
-    use super::{Lexer, Span, SpannedToken, Token};
-    use crate::common::span::CodePosition;
+    use super::*;
 
     fn lex(source: &str) -> Vec<SpannedToken> {
         Lexer::new(source).iter().collect()

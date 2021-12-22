@@ -521,11 +521,10 @@ fn mk_expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::ast::Expr;
 
     #[test]
     fn expression_parsing() {
-        fn parse_expression(source: &str) -> Expr {
+        fn parse_expression(source: &str) -> ast::Expr {
             let mut parser = Parser::new(source);
             parser.parse_expression().unwrap()
         }
