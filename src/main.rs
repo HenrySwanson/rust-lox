@@ -1,14 +1,10 @@
-use crate::bytecode::{Compiler, VM};
-use crate::frontend::ast;
-use crate::frontend::Parser;
-use crate::treewalk::{Interpreter, Resolver};
+use rust_lox::bytecode::{Compiler, VM};
+use rust_lox::frontend::ast;
+use rust_lox::frontend::Parser;
+use rust_lox::treewalk::{Interpreter, Resolver};
 
 use std::io::Write;
 use std::{env, fs, io, process};
-
-mod bytecode;
-mod frontend;
-mod treewalk;
 
 const USE_BYTECODE_INTERPRETER: bool = true;
 
