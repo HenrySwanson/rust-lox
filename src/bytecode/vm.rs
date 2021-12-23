@@ -53,24 +53,24 @@ pub struct VM<W> {
 }
 
 impl Value {
-    fn cast_to_class(&self) -> RuntimeResult<GcPtr<LoxClass>> {
+    fn class(&self) -> Option<GcPtr<LoxClass>> {
         match self {
-            Value::Class(ptr) => Ok(ptr.clone()),
-            _ => Err(RuntimeError::NotAClass),
+            Value::Class(ptr) => Some(ptr.clone()),
+            _ => None,
         }
     }
 
-    fn cast_to_instance(&self) -> RuntimeResult<GcPtr<LoxInstance>> {
+    fn instance(&self) -> Option<GcPtr<LoxInstance>> {
         match self {
-            Value::Instance(ptr) => Ok(ptr.clone()),
-            _ => Err(RuntimeError::NotAnInstance),
+            Value::Instance(ptr) => Some(ptr.clone()),
+            _ => None,
         }
     }
 
-    fn cast_to_closure(&self) -> RuntimeResult<GcPtr<LoxClosure>> {
+    fn closure(&self) -> Option<GcPtr<LoxClosure>> {
         match self {
-            Value::Closure(ptr) => Ok(ptr.clone()),
-            _ => Err(RuntimeError::NotAClosure),
+            Value::Closure(ptr) => Some(ptr.clone()),
+            _ => None,
         }
     }
 }
@@ -472,7 +472,11 @@ impl<W: std::io::Write> VM<W> {
                 }
                 RichOpcode::GetProperty(idx) => {
                     let name = self.fetch_string(idx);
-                    let instance_ptr = self.stack.peek(0)?.cast_to_instance()?;
+                    let instance_ptr = self
+                        .stack
+                        .peek(0)?
+                        .instance()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     let value = match instance_ptr.borrow().lookup(&name) {
                         PropertyLookup::Field(value) => value,
@@ -489,7 +493,11 @@ impl<W: std::io::Write> VM<W> {
                 RichOpcode::SetProperty(idx) => {
                     let name = self.fetch_string(idx);
                     let value = self.stack.peek(0)?.clone();
-                    let mut instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
+                    let mut instance_ptr = self
+                        .stack
+                        .peek(1)?
+                        .instance()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     instance_ptr.borrow_mut().fields.insert(name, value.clone());
 
@@ -500,8 +508,13 @@ impl<W: std::io::Write> VM<W> {
                 }
                 RichOpcode::MakeMethod(idx) => {
                     let method_name = self.fetch_string(idx);
-                    let method_ptr = self.stack.peek(0)?.cast_to_closure()?;
-                    let mut class_ptr = self.stack.peek(1)?.cast_to_class()?;
+                    let method_ptr = self
+                        .stack
+                        .peek(0)?
+                        .closure()
+                        .ok_or(RuntimeError::NotAClosure)?;
+                    let mut class_ptr =
+                        self.stack.peek(1)?.class().ok_or(RuntimeError::NotAClass)?;
 
                     class_ptr
                         .borrow_mut()
@@ -513,7 +526,11 @@ impl<W: std::io::Write> VM<W> {
                     let method_name = self.fetch_string(idx);
                     let arg_count = usize::from(argc);
 
-                    let receiver_ptr = self.stack.peek(arg_count)?.cast_to_instance()?;
+                    let receiver_ptr = self
+                        .stack
+                        .peek(arg_count)?
+                        .instance()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     // Gotta check the fields still; must behave identically to a
                     // OP_GET_PROPERTY + OP_CALL
@@ -527,16 +544,22 @@ impl<W: std::io::Write> VM<W> {
                     };
                 }
                 RichOpcode::Inherit => {
-                    let superclass_ptr = self.stack.peek(1)?.cast_to_class()?;
-                    let mut class_ptr = self.stack.peek(0)?.cast_to_class()?;
+                    let superclass_ptr =
+                        self.stack.peek(1)?.class().ok_or(RuntimeError::NotAClass)?;
+                    let mut class_ptr =
+                        self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
 
                     let methods = superclass_ptr.borrow().methods.clone();
                     class_ptr.borrow_mut().methods = methods;
                 }
                 RichOpcode::GetSuper(idx) => {
                     let method_name = self.fetch_string(idx);
-                    let class_ptr = self.stack.peek(0)?.cast_to_class()?;
-                    let instance_ptr = self.stack.peek(1)?.cast_to_instance()?;
+                    let class_ptr = self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
+                    let instance_ptr = self
+                        .stack
+                        .peek(1)?
+                        .instance()
+                        .ok_or(RuntimeError::NotAnInstance)?;
 
                     let method_ptr = match class_ptr.borrow().methods.get(&method_name) {
                         Some(method_ptr) => method_ptr.clone(),
@@ -556,7 +579,8 @@ impl<W: std::io::Write> VM<W> {
                     let method_name = self.fetch_string(idx);
                     let arg_count = usize::from(argc);
 
-                    let superclass_ptr = self.stack.peek(0)?.cast_to_class()?;
+                    let superclass_ptr =
+                        self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
                     self.stack.pop()?;
 
                     // No need to check the fields, this must be a method. The stack is
