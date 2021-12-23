@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use super::opcode::{ConstantIdx, OpcodeError, RichOpcode, UpvalueAddr};
 use super::string_interning::InternedString;
+use super::errs::{CompilerError, CompilerResult};
 
 // Chunk constants are somewhat different from runtime values -- there's
 // no recursion possible, and there's never heap allocation.
@@ -106,10 +107,10 @@ impl Chunk {
         UpvalueAddr::decode(&self.code, offset)
     }
 
-    pub fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {
+    pub fn add_constant(&mut self, constant: ChunkConstant) -> CompilerResult<ConstantIdx> {
         self.constants.push(constant);
         let idx = self.constants.len() - 1;
-        idx.try_into().expect("Too many constants")
+        idx.try_into().map_err(|_| CompilerError::TooManyConstants)
     }
 
     pub fn lookup_constant(&self, idx: ConstantIdx) -> ChunkConstant {

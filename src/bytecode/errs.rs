@@ -5,6 +5,7 @@ use super::opcode::OpcodeError;
 pub enum CompilerError {
     LocalAlreadyExists(String),
     LocalUsedInOwnInitializer(String),
+    TooManyConstants,
     TooManyLocals,
     TooManyUpvalues,
     SelfInherit(String),

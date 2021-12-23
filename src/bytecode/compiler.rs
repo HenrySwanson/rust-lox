@@ -213,7 +213,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.declare_variable(name)?;
 
                 // Store the name as a constant
-                let idx = self.add_string_constant(name);
+                let idx = self.add_string_constant(name)?;
                 self.emit_op(RichOpcode::MakeClass(idx), line_no);
                 self.define_variable(name, line_no)?;
 
@@ -244,7 +244,7 @@ impl<'strtable> Compiler<'strtable> {
                     };
                     self.compile_function_decl(&method, method.body.span.lo.line_no, fn_type)?;
 
-                    let idx = self.add_string_constant(&method.name);
+                    let idx = self.add_string_constant(&method.name)?;
                     self.emit_op(RichOpcode::MakeMethod(idx), method.body.span.hi.line_no);
                 }
 
@@ -356,7 +356,7 @@ impl<'strtable> Compiler<'strtable> {
 
         // Unlike regular constants, we load this with MAKE_CLOSURE
         // TODO should i have a separate list for these in the chunk?
-        let idx = self.add_constant(fn_template);
+        let idx = self.add_constant(fn_template)?;
         self.emit_op(RichOpcode::MakeClosure(idx), line_no);
 
         // Now encode all the upvalues that this closure should have
@@ -371,7 +371,7 @@ impl<'strtable> Compiler<'strtable> {
         // stack effect: puts value on top of the stack
         let line_no = expr.span.lo.line_no;
         match &expr.kind {
-            ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no),
+            ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no)?,
             ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
             ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
             ast::ExprKind::Variable(var) => self.get_variable(&var, line_no)?,
@@ -384,12 +384,12 @@ impl<'strtable> Compiler<'strtable> {
             }
             ast::ExprKind::Call(callee, args) => self.compile_call(callee, args)?,
             ast::ExprKind::Get(expr, name) => {
-                let idx = self.add_string_constant(name);
+                let idx = self.add_string_constant(name)?;
                 self.compile_expression(expr)?;
                 self.emit_op(RichOpcode::GetProperty(idx), line_no);
             }
             ast::ExprKind::Set(expr, name, value_expr) => {
-                let idx = self.add_string_constant(name);
+                let idx = self.add_string_constant(name)?;
                 self.compile_expression(expr)?;
                 self.compile_expression(value_expr)?;
                 self.emit_op(RichOpcode::SetProperty(idx), line_no);
@@ -401,7 +401,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.get_variable(THIS_STR, line_no)?;
                 self.get_variable(SUPER_STR, line_no)?;
 
-                let idx = self.add_string_constant(method_name);
+                let idx = self.add_string_constant(method_name)?;
                 self.emit_op(RichOpcode::GetSuper(idx), line_no);
             }
         };
@@ -409,11 +409,11 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize) {
+    fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize) -> CompilerResult<()> {
         match literal {
             ast::Literal::Number(n) => {
                 let value = ChunkConstant::Number(*n);
-                let idx = self.add_constant(value);
+                let idx = self.add_constant(value)?;
                 self.emit_op(RichOpcode::Constant(idx), line_no);
             }
             ast::Literal::Boolean(b) => {
@@ -426,13 +426,15 @@ impl<'strtable> Compiler<'strtable> {
             }
             ast::Literal::Str(s) => {
                 let value = ChunkConstant::String(self.string_table.get_interned(s));
-                let idx = self.add_constant(value);
+                let idx = self.add_constant(value)?;
                 self.emit_op(RichOpcode::Constant(idx), line_no);
             }
             ast::Literal::Nil => {
                 self.emit_op(RichOpcode::Nil, line_no);
             }
-        }
+        };
+
+        Ok(())
     }
 
     fn compile_infix(
@@ -524,7 +526,7 @@ impl<'strtable> Compiler<'strtable> {
 
                 // Then we emit the OP_INVOKE
                 let line_no = callee.span.hi.line_no;
-                let idx = self.add_string_constant(method_name);
+                let idx = self.add_string_constant(method_name)?;
 
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
@@ -539,7 +541,7 @@ impl<'strtable> Compiler<'strtable> {
 
                 // Then we emit the OP_SUPER_INVOKE
                 let line_no = callee.span.hi.line_no;
-                let idx = self.add_string_constant(method_name);
+                let idx = self.add_string_constant(method_name)?;
 
                 self.emit_op(RichOpcode::SuperInvoke(idx, num_args), line_no);
             }
@@ -573,7 +575,7 @@ impl<'strtable> Compiler<'strtable> {
         if self.get_ctx().scope_depth == 0 {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
-            let global_idx = self.add_string_constant(name);
+            let global_idx = self.add_string_constant(name)?;
             self.emit_op(RichOpcode::DefineGlobal(global_idx), line_no);
         } else {
             self.get_ctx_mut().mark_last_local_initialized();
@@ -586,7 +588,7 @@ impl<'strtable> Compiler<'strtable> {
         match self.resolve_variable(var_name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a GetGlobal instruction.
-                let global_idx = self.add_string_constant(var_name);
+                let global_idx = self.add_string_constant(var_name)?;
                 self.emit_op(RichOpcode::GetGlobal(global_idx), line_no);
             }
             VariableLocator::Local(idx) => {
@@ -613,7 +615,7 @@ impl<'strtable> Compiler<'strtable> {
         match self.resolve_variable(var_name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a SetGlobal instruction.
-                let global_idx = self.add_string_constant(var_name);
+                let global_idx = self.add_string_constant(var_name)?;
                 self.emit_op(RichOpcode::SetGlobal(global_idx), line_no);
             }
             VariableLocator::Local(idx) => {
@@ -647,11 +649,11 @@ impl<'strtable> Compiler<'strtable> {
         &mut self.get_ctx_mut().chunk
     }
 
-    fn add_constant(&mut self, constant: ChunkConstant) -> ConstantIdx {
+    fn add_constant(&mut self, constant: ChunkConstant) -> CompilerResult<ConstantIdx> {
         self.current_chunk().add_constant(constant)
     }
 
-    fn add_string_constant(&mut self, string: &str) -> ConstantIdx {
+    fn add_string_constant(&mut self, string: &str) -> CompilerResult<ConstantIdx> {
         let constant = ChunkConstant::String(self.string_table.get_interned(string));
         self.add_constant(constant)
     }
