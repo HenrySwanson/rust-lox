@@ -17,21 +17,25 @@ pub enum CompilerError {
 pub enum RuntimeError {
     InvalidOpcode(u8),
     DivideByZero,
-    IncorrectOperandType,
+    IncorrectOperandTypeAdd,
+    NonNumericOperandBinary,
+    NonNumericOperandUnary,
     StackEmpty,
     StackOverflow,
     InvalidStackIndex,
     UndefinedGlobal(String),
     NotACallable,
-    WrongArity,
+    WrongArity(usize, usize),
     NativeError(String),
     UntranslatableConstant(ChunkConstant),
     BadUpvalue,
     NotAClass,
     NotAnInstance,
     NotAClosure,
-    UndefinedProperty,
-    ArgumentsToDefaultInitializer,
+    UndefinedProperty(String),
+    BadSuperclass,
+    BadFieldAccess,
+    BadPropertyAccess,
     InstructionOutOfBounds,
 }
 
@@ -47,3 +51,42 @@ impl From<OpcodeError> for RuntimeError {
         }
     }
 }
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeError::InvalidOpcode(_) => write!(f, "{:?}", self),
+            RuntimeError::DivideByZero => write!(f, "{:?}", self),
+            RuntimeError::IncorrectOperandTypeAdd => {
+                write!(f, "Operands must be two numbers or two strings.")
+            }
+            RuntimeError::NonNumericOperandBinary => write!(f, "Operands must be numbers."),
+            RuntimeError::NonNumericOperandUnary => write!(f, "Operand must be a number."),
+            RuntimeError::StackEmpty => write!(f, "{:?}", self),
+            RuntimeError::StackOverflow => write!(f, "{:?}", self),
+            RuntimeError::InvalidStackIndex => write!(f, "{:?}", self),
+            RuntimeError::UndefinedGlobal(var_name) => {
+                write!(f, "Undefined variable '{}'.", var_name)
+            }
+            RuntimeError::NotACallable => write!(f, "Can only call functions and classes."),
+            RuntimeError::WrongArity(expected, actual) => {
+                write!(f, "Expected {} arguments but got {}.", expected, actual)
+            }
+            RuntimeError::NativeError(_) => write!(f, "{:?}", self),
+            RuntimeError::UntranslatableConstant(_) => write!(f, "{:?}", self),
+            RuntimeError::BadUpvalue => write!(f, "{:?}", self),
+            RuntimeError::NotAClass => write!(f, "{:?}", self),
+            RuntimeError::NotAnInstance => write!(f, "Only instances have properties."),
+            RuntimeError::NotAClosure => write!(f, "{:?}", self),
+            RuntimeError::UndefinedProperty(prop_name) => {
+                write!(f, "Undefined property '{}'.", prop_name)
+            }
+            RuntimeError::BadSuperclass => write!(f, "Superclass must be a class."),
+            RuntimeError::BadFieldAccess => write!(f, "Only instances have fields."),
+            RuntimeError::BadPropertyAccess => write!(f, "Only instances have properties."),
+            RuntimeError::InstructionOutOfBounds => write!(f, "{:?}", self),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeError {}

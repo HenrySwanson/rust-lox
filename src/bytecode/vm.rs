@@ -328,7 +328,7 @@ impl<W: std::io::Write> VM<W> {
                         self.stack.pop()?;
                         self.stack.push(Value::Number(-n));
                     }
-                    _ => return Err(RuntimeError::IncorrectOperandType),
+                    _ => return Err(RuntimeError::NonNumericOperandUnary),
                 },
                 // Logical
                 RichOpcode::Not => {
@@ -476,14 +476,16 @@ impl<W: std::io::Write> VM<W> {
                         .stack
                         .peek(0)?
                         .instance()
-                        .ok_or(RuntimeError::NotAnInstance)?;
+                        .ok_or(RuntimeError::BadPropertyAccess)?;
 
                     let value = match instance_ptr.borrow().lookup(&name) {
                         PropertyLookup::Field(value) => value,
                         PropertyLookup::Method(method) => self
                             .object_heap
                             .insert_new_bound_method(instance_ptr.clone(), method),
-                        PropertyLookup::NotFound => return Err(RuntimeError::UndefinedProperty),
+                        PropertyLookup::NotFound => {
+                            return Err(RuntimeError::UndefinedProperty(name.to_string()))
+                        }
                     };
 
                     // Pop the instance, push the bound method
@@ -497,7 +499,7 @@ impl<W: std::io::Write> VM<W> {
                         .stack
                         .peek(1)?
                         .instance()
-                        .ok_or(RuntimeError::NotAnInstance)?;
+                        .ok_or(RuntimeError::BadFieldAccess)?;
 
                     instance_ptr.borrow_mut().fields.insert(name, value.clone());
 
@@ -540,12 +542,17 @@ impl<W: std::io::Write> VM<W> {
                             self.call(arg_count)?;
                         }
                         PropertyLookup::Method(method) => self.call_closure(method, arg_count)?,
-                        PropertyLookup::NotFound => return Err(RuntimeError::UndefinedProperty),
+                        PropertyLookup::NotFound => {
+                            return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
+                        }
                     };
                 }
                 RichOpcode::Inherit => {
-                    let superclass_ptr =
-                        self.stack.peek(1)?.class().ok_or(RuntimeError::NotAClass)?;
+                    let superclass_ptr = self
+                        .stack
+                        .peek(1)?
+                        .class()
+                        .ok_or(RuntimeError::BadSuperclass)?;
                     let mut class_ptr =
                         self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
 
@@ -563,7 +570,9 @@ impl<W: std::io::Write> VM<W> {
 
                     let method_ptr = match class_ptr.borrow().methods.get(&method_name) {
                         Some(method_ptr) => method_ptr.clone(),
-                        None => return Err(RuntimeError::UndefinedProperty),
+                        None => {
+                            return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
+                        }
                     };
 
                     let value = self
@@ -587,7 +596,9 @@ impl<W: std::io::Write> VM<W> {
                     // already set up exactly how we want it.
                     match superclass_ptr.borrow().methods.get(&method_name) {
                         Some(method) => self.call_closure(method.clone(), arg_count)?,
-                        None => return Err(RuntimeError::UndefinedProperty),
+                        None => {
+                            return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
+                        }
                     };
                 }
                 // Other
@@ -713,7 +724,7 @@ impl<W: std::io::Write> VM<W> {
             Value::Closure(ptr) => self.call_closure(ptr, arg_count),
             Value::NativeFunction(func) => {
                 if func.data.arity != arg_count {
-                    return Err(RuntimeError::WrongArity);
+                    return Err(RuntimeError::WrongArity(func.data.arity, arg_count));
                 }
 
                 // Don't even do anything to the interpreter stack, just plug in the args
@@ -744,7 +755,7 @@ impl<W: std::io::Write> VM<W> {
                 if let Some(init) = class_ptr.borrow().methods.get("init") {
                     self.call_closure(init.clone(), arg_count)?
                 } else if arg_count > 0 {
-                    return Err(RuntimeError::ArgumentsToDefaultInitializer);
+                    return Err(RuntimeError::WrongArity(0, arg_count));
                 };
 
                 // No need to clean the stack, that will happen when we hit a return.
@@ -773,7 +784,7 @@ impl<W: std::io::Write> VM<W> {
 
         // Check that the arity matches, and push the new frame
         if closure.arity != arg_count {
-            return Err(RuntimeError::WrongArity);
+            return Err(RuntimeError::WrongArity(closure.arity, arg_count));
         }
 
         self.push_new_frame(
@@ -871,7 +882,7 @@ impl<W: std::io::Write> VM<W> {
                 let interned = self.string_table.get_interned(new_string);
                 Value::String(interned)
             }
-            _ => return Err(RuntimeError::IncorrectOperandType),
+            _ => return Err(RuntimeError::IncorrectOperandTypeAdd),
         };
 
         self.stack.pop()?;
@@ -896,7 +907,7 @@ impl<W: std::io::Write> VM<W> {
                 self.stack.push(result);
                 Ok(())
             }
-            (_, _) => Err(RuntimeError::IncorrectOperandType),
+            (_, _) => Err(RuntimeError::NonNumericOperandBinary),
         }
     }
 

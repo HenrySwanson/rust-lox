@@ -4,6 +4,7 @@ use rust_lox::frontend::Parser;
 use regex::Regex;
 use test_generator::test_resources;
 
+#[derive(Debug)]
 struct Expected {
     out: Vec<String>,
     runtime_err: Option<String>,
@@ -53,10 +54,7 @@ fn test_bytecode_vm(filename: &str) {
     assert_eq!(expected.out, out_lines);
 
     // Check the runtime errors
-    assert_eq!(
-        expected.runtime_err,
-        vm_result.err().map(|e| format!("{:?}", e))
-    )
+    assert_eq!(expected.runtime_err, vm_result.err().map(|e| e.to_string()));
 }
 
 fn get_expected_output(source: &str) -> Expected {
@@ -73,7 +71,8 @@ fn get_expected_output(source: &str) -> Expected {
             ex.out.push(m.get(1).unwrap().as_str().to_owned());
         }
         if let Some(m) = runtime_err_regex.captures(line) {
-            ex.runtime_err.replace(m.get(1).unwrap().as_str().to_owned());
+            ex.runtime_err
+                .replace(m.get(1).unwrap().as_str().to_owned());
         }
     }
 
