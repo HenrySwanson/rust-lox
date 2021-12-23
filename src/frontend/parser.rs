@@ -28,7 +28,9 @@ impl<'src> Parser<'src> {
         };
 
         // "Prime the pump" and return
-        parser.bump().unwrap();
+        // If we get an error token, that's okay, we'll pick it up with
+        // `check` and `try_eat`.
+        std::mem::drop(parser.bump());
         parser
     }
 

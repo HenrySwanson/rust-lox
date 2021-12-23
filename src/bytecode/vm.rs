@@ -14,6 +14,7 @@ use super::value::{
 };
 
 const GC_PERIOD: u32 = 1000;
+const MAX_FRAMES: usize = 64;
 
 struct CallFrame {
     ip: usize,
@@ -556,6 +557,7 @@ impl<W: std::io::Write> VM<W> {
                     let arg_count = usize::from(argc);
 
                     let superclass_ptr = self.stack.peek(0)?.cast_to_class()?;
+                    self.stack.pop()?;
 
                     // No need to check the fields, this must be a method. The stack is
                     // already set up exactly how we want it.
@@ -563,8 +565,6 @@ impl<W: std::io::Write> VM<W> {
                         Some(method) => self.call_closure(method.clone(), arg_count)?,
                         None => return Err(RuntimeError::UndefinedProperty),
                     };
-
-                    self.stack.pop()?;
                 }
                 // Other
                 RichOpcode::Call(argc) => {
@@ -616,7 +616,11 @@ impl<W: std::io::Write> VM<W> {
         name: InternedString,
         chunk: Rc<Chunk>,
         upvalues: Rc<[UpvalueRef]>,
-    ) {
+    ) -> RuntimeResult<()> {
+        if self.call_stack.len() == MAX_FRAMES {
+            return Err(RuntimeError::StackOverflow);
+        }
+
         let new_frame = CallFrame {
             ip: 0,
             base_ptr: self.stack.len() - (arg_count + 1),
@@ -625,6 +629,7 @@ impl<W: std::io::Write> VM<W> {
             upvalues,
         };
         self.call_stack.push(new_frame);
+        Ok(())
     }
 
     fn pop_frame(&mut self) -> RuntimeResult<Value> {
@@ -752,7 +757,7 @@ impl<W: std::io::Write> VM<W> {
             closure.name.clone(),
             closure.chunk.clone(),
             closure.upvalues.clone(),
-        );
+        )?;
 
         Ok(())
     }

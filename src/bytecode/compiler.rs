@@ -221,7 +221,7 @@ impl<'strtable> Compiler<'strtable> {
                 // Whether or not there is, the class goes on the stack next.
                 if let Some(superclass) = superclass {
                     if superclass == name {
-                        todo!();
+                        return Err(CompilerError::SelfInherit(name.to_owned()));
                     }
 
                     self.begin_scope();
@@ -529,7 +529,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
             ast::ExprKind::Super(method_name) => {
-                // We put the reciever on the stack, then all the arguments, then the superclass
+                // We put the receiver on the stack, then all the arguments, then the superclass
                 let line_no = callee.span.lo.line_no;
                 self.get_variable(THIS_STR, line_no)?;
                 for arg in args.iter() {

@@ -7,6 +7,7 @@ pub enum CompilerError {
     LocalUsedInOwnInitializer(String),
     TooManyLocals,
     TooManyUpvalues,
+    SelfInherit(String),
 }
 
 // TODO how can i get the failed instruction in here?
@@ -16,6 +17,7 @@ pub enum RuntimeError {
     DivideByZero,
     IncorrectOperandType,
     StackEmpty,
+    StackOverflow,
     InvalidStackIndex,
     UndefinedGlobal(String),
     NotACallable,
