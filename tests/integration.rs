@@ -4,6 +4,11 @@ use rust_lox::frontend::Parser;
 use regex::Regex;
 use test_generator::test_resources;
 
+struct Expected {
+    out: Vec<String>,
+    runtime_err: Option<String>,
+}
+
 #[test_resources("tests/integration/**/*.lox")]
 fn test_bytecode_vm(filename: &str) {
     // TODO this one's not working, go fix it
@@ -25,39 +30,52 @@ fn test_bytecode_vm(filename: &str) {
 
     // Get expected output, and prep buffer for actual output
     let expected = get_expected_output(&source);
-    let mut actual = Vec::<u8>::with_capacity(expected.len());
+    let mut out_buf = Vec::<u8>::with_capacity(expected.out.len());
 
     let parser = Parser::new(&source);
     // TODO augment tests to catch parsing errors
     let tree = succeed_on_err!(parser.parse_all());
 
-    let mut vm = VM::new_with_output(std::io::Cursor::new(&mut actual));
+    let mut vm = VM::new_with_output(std::io::Cursor::new(&mut out_buf));
     let mut compiler = Compiler::new(vm.borrow_string_table());
 
     // TODO augment tests to catch compiler errors
     let main_fn = succeed_on_err!(compiler.compile(&tree.statements));
-    // TODO augment tests to catch runtime errors
-    succeed_on_err!(vm.interpret(main_fn));
+    let vm_result = vm.interpret(main_fn);
 
     // Check the expected and actual outputs
-    let actual: Vec<String> = String::from_utf8(actual)
+    let out_lines: Vec<String> = String::from_utf8(out_buf)
         .unwrap()
         .lines()
         .map(|x| x.to_owned())
         .collect();
 
-    assert_eq!(expected, actual);
+    assert_eq!(expected.out, out_lines);
+
+    // Check the runtime errors
+    assert_eq!(
+        expected.runtime_err,
+        vm_result.err().map(|e| format!("{:?}", e))
+    )
 }
 
-fn get_expected_output(source: &str) -> Vec<String> {
+fn get_expected_output(source: &str) -> Expected {
     let output_regex = Regex::new(r"// expect: (.*)$").unwrap();
+    let runtime_err_regex = Regex::new(r"// expect runtime error: (.*)$").unwrap();
 
-    let mut expected_outputs = vec![];
+    let mut ex = Expected {
+        out: vec![],
+        runtime_err: None,
+    };
+
     for line in source.lines() {
         if let Some(m) = output_regex.captures(line) {
-            expected_outputs.push(m.get(1).unwrap().as_str().to_owned());
+            ex.out.push(m.get(1).unwrap().as_str().to_owned());
+        }
+        if let Some(m) = runtime_err_regex.captures(line) {
+            ex.runtime_err.replace(m.get(1).unwrap().as_str().to_owned());
         }
     }
 
-    expected_outputs
+    ex
 }
