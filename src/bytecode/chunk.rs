@@ -2,9 +2,9 @@ use std::convert::TryInto;
 use std::fmt;
 use std::rc::Rc;
 
+use super::errs::{CompilerError, CompilerResult};
 use super::opcode::{ConstantIdx, OpcodeError, RichOpcode, UpvalueAddr};
 use super::string_interning::InternedString;
-use super::errs::{CompilerError, CompilerResult};
 
 // Chunk constants are somewhat different from runtime values -- there's
 // no recursion possible, and there's never heap allocation.

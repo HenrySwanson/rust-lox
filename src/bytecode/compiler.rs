@@ -279,12 +279,12 @@ impl<'strtable> Compiler<'strtable> {
         // Note that we always need an else-jump so that we only ever
         // pop once.
         let jump_over_else = self.emit_jump(RichOpcode::Jump(0), line_no);
-        self.patch_jump(jump_to_else);
+        self.patch_jump(jump_to_else)?;
         self.emit_op(RichOpcode::Pop, line_no);
         if let Some(else_body) = else_body {
             self.compile_statement(else_body)?;
         }
-        self.patch_jump(jump_over_else);
+        self.patch_jump(jump_over_else)?;
 
         Ok(())
     }
@@ -302,9 +302,9 @@ impl<'strtable> Compiler<'strtable> {
         self.emit_op(RichOpcode::Pop, line_no);
 
         self.compile_statement(body)?;
-        self.emit_loop(loop_start, line_no);
+        self.emit_loop(loop_start, line_no)?;
 
-        self.patch_jump(exit_jump);
+        self.patch_jump(exit_jump)?;
         self.emit_op(RichOpcode::Pop, line_no);
 
         Ok(())
@@ -491,7 +491,7 @@ impl<'strtable> Compiler<'strtable> {
         let jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
         self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
         self.compile_expression(rhs)?;
-        self.patch_jump(jump);
+        self.patch_jump(jump)?;
 
         Ok(())
     }
@@ -502,11 +502,11 @@ impl<'strtable> Compiler<'strtable> {
         // lhs is now on the stack. if it's true, we want to keep it.
         let skip_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
         let jump_for_true = self.emit_jump(RichOpcode::Jump(0), lhs.span.lo.line_no);
-        self.patch_jump(skip_jump);
+        self.patch_jump(skip_jump)?;
 
         self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
         self.compile_expression(rhs)?;
-        self.patch_jump(jump_for_true);
+        self.patch_jump(jump_for_true)?;
 
         Ok(())
     }
@@ -743,23 +743,24 @@ impl<'strtable> Compiler<'strtable> {
         jmp_idx
     }
 
-    fn patch_jump(&mut self, jmp_idx: usize) {
+    fn patch_jump(&mut self, jmp_idx: usize) -> CompilerResult<()> {
         // distance from (instruction after JMP) to here
         let distance = self.current_chunk().len() - (jmp_idx + 3);
 
         // TODO: better error handling here...
-        let distance = u16::try_from(distance).expect("Jump distance too large!");
+        let distance = u16::try_from(distance).map_err(|_| CompilerError::JumpTooLong)?;
         self.current_chunk()
             .patch_u16(jmp_idx + 1, distance)
             .unwrap();
+        Ok(())
     }
 
-    fn emit_loop(&mut self, loop_start_idx: usize, line_no: usize) {
+    fn emit_loop(&mut self, loop_start_idx: usize, line_no: usize) -> CompilerResult<()> {
         // distance from (instruction after LOOP) to loop_start
         let distance = (self.current_chunk().len() + 3) - loop_start_idx;
-        let distance = u16::try_from(distance).expect("Loop distance too large!");
-
+        let distance = u16::try_from(distance).map_err(|_| CompilerError::JumpTooLong)?;
         self.emit_op(RichOpcode::Loop(distance), line_no);
+        Ok(())
     }
 
     #[allow(unused_variables)]

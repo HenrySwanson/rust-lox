@@ -8,6 +8,7 @@ pub enum CompilerError {
     TooManyConstants,
     TooManyLocals,
     TooManyUpvalues,
+    JumpTooLong,
     SelfInherit(String),
 }
 
