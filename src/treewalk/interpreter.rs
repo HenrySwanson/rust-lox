@@ -189,7 +189,7 @@ impl<W: std::io::Write> Interpreter<W> {
 
                 let err_msg = "relationship between super and this broken";
                 let this_depth = match var.hops {
-                    ast::VHops::Global => panic!(err_msg),
+                    ast::VHops::Global => panic!("{}", err_msg),
                     ast::VHops::Local(hops) => hops - 1,
                 };
                 let this = self.env.get_at(this_depth, THIS_STR).expect(err_msg);

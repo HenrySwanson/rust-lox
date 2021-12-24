@@ -43,7 +43,7 @@ impl<'src> Parser<'src> {
         self.current = self.lexer.next_token();
 
         if let Token::Error(e) = &self.current.token {
-            Err(Error::IllegalToken(self.current.span.clone(), e.clone()))
+            Err(Error::IllegalToken(self.current.span, e.clone()))
         } else {
             Ok(())
         }

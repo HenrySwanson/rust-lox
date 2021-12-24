@@ -149,22 +149,22 @@ impl Chunk {
         };
 
         macro_rules! print_two {
-            ($op:expr, $first:expr) => {
+            ($op:expr, $first:expr) => {{
                 println!("{:20} {:4}", $op, $first);
-            };
+            }};
         }
 
         macro_rules! print_three {
-            ($op:expr, $first:expr, $second:expr) => {
+            ($op:expr, $first:expr, $second:expr) => {{
                 println!("{:20} {:04?} {:?}", $op, $first, $second);
-            };
+            }};
         }
 
         macro_rules! print_with_constant {
             ($op:expr, $idx:expr) => {{
                 let constant = self.lookup_constant($idx);
                 print_three!($op, $idx, constant);
-            };};
+            }};
         }
 
         match op {

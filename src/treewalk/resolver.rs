@@ -77,7 +77,7 @@ impl Resolver {
             }
             frontend_ast::StmtKind::VariableDecl(name, expr) => {
                 // Declare, resolve, define
-                if self.is_already_defined(&name) {
+                if self.is_already_defined(name) {
                     return Err(Error::RedefineLocalVar(name.to_owned()));
                 }
 
@@ -146,7 +146,7 @@ impl Resolver {
             }
             frontend_ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 // Define the class in the current scope
-                self.define(&name);
+                self.define(name);
 
                 // Resolve the superclass if it exists
                 let resolved_superclass = match superclass {
@@ -154,7 +154,7 @@ impl Resolver {
                         if superclass == name {
                             return Err(Error::InheritFromSelf);
                         }
-                        Some(self.resolve_variable(&superclass))
+                        Some(self.resolve_variable(superclass))
                     }
                     None => None,
                 };
@@ -200,7 +200,7 @@ impl Resolver {
 
         Ok(ast::Stmt {
             kind,
-            span: stmt.span.clone(),
+            span: stmt.span,
         })
     }
 
@@ -223,13 +223,13 @@ impl Resolver {
             }
             frontend_ast::ExprKind::Variable(var) => {
                 // Check if we're in the middle of initializing ourselves
-                if self.is_during_initializer(&var) {
+                if self.is_during_initializer(var) {
                     return Err(Error::UsedInOwnInitializer(var.to_owned()));
                 }
-                ast::ExprKind::Variable(self.resolve_variable(&var))
+                ast::ExprKind::Variable(self.resolve_variable(var))
             }
             frontend_ast::ExprKind::Assignment(var, subexpr) => {
-                let var = self.resolve_variable(&var);
+                let var = self.resolve_variable(var);
                 let subexpr = Box::new(self.resolve_expression(subexpr)?);
                 ast::ExprKind::Assignment(var, subexpr)
             }
@@ -266,7 +266,7 @@ impl Resolver {
 
         Ok(ast::Expr {
             kind,
-            span: expr.span.clone(),
+            span: expr.span,
         })
     }
     // TODO we could just implement this as a method on the ast components

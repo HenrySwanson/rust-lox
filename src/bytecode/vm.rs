@@ -303,7 +303,7 @@ impl<W: std::io::Write> VM<W> {
                 // Constants
                 RichOpcode::Constant(idx) => {
                     let value = match self.fetch_constant(idx) {
-                        ChunkConstant::Number(n) => Value::Number(n.into()),
+                        ChunkConstant::Number(n) => Value::Number(n),
                         ChunkConstant::String(s) => Value::String(s),
                         c => return Err(RuntimeError::UntranslatableConstant(c)),
                     };
@@ -876,7 +876,7 @@ impl<W: std::io::Write> VM<W> {
             (Value::Number(n), Value::Number(m)) => Value::Number(n + m),
             (Value::String(s), Value::String(t)) => {
                 // Gotta use as_ref to get a &str from the Rc<str>
-                let new_string = s.as_ref().to_owned() + &t;
+                let new_string = s.as_ref().to_owned() + t;
                 let interned = self.string_table.get_interned(new_string);
                 Value::String(interned)
             }

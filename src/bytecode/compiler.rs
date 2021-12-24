@@ -241,7 +241,7 @@ impl<'strtable> Compiler<'strtable> {
                     self.declare_variable(SUPER_STR)?;
                     self.define_variable(SUPER_STR, line_no)?;
 
-                    self.get_variable(&superclass, line_no)?;
+                    self.get_variable(superclass, line_no)?;
                     self.get_variable(name, line_no)?;
                     self.emit_op(RichOpcode::Inherit, line_no);
                 } else {
@@ -256,7 +256,7 @@ impl<'strtable> Compiler<'strtable> {
                         FunctionType::Method
                     };
                     // TODO deal with function decl span better
-                    self.compile_function_decl(&method, 0, fn_type)?;
+                    self.compile_function_decl(method, 0, fn_type)?;
 
                     let idx = self.add_string_constant(&method.name)?;
                     self.emit_op(RichOpcode::MakeMethod(idx), 0);
@@ -387,8 +387,8 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no)?,
             ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
             ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
-            ast::ExprKind::Variable(var) => self.get_variable(&var, line_no)?,
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(&var, expr, line_no)?,
+            ast::ExprKind::Variable(var) => self.get_variable(var, line_no)?,
+            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, line_no)?,
             ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
                 self.compile_and(lhs, rhs)?
             }
