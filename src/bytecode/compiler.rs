@@ -45,13 +45,19 @@ struct Context {
     function_type: FunctionType,
 }
 
+struct ClassContext {
+    has_superclass: bool,
+}
+
 pub struct Compiler<'strtable> {
     // We need a string table to stuff strings in
     string_table: &'strtable mut StringInterner,
     context_stack: Vec<Context>,
+    class_stack: Vec<ClassContext>,
 }
 
 impl FunctionType {
+    // TODO destroy
     fn in_class(&self) -> bool {
         match self {
             FunctionType::Root | FunctionType::Function => false,
@@ -149,6 +155,7 @@ impl<'strtable> Compiler<'strtable> {
         Compiler {
             string_table,
             context_stack: vec![],
+            class_stack: vec![],
         }
     }
 
@@ -234,6 +241,11 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::MakeClass(idx), line_no);
                 self.define_variable(name, line_no)?;
 
+                // Push the class context onto the stack
+                self.class_stack.push(ClassContext {
+                    has_superclass: superclass.is_some(),
+                });
+
                 // If there's a superclass, load it in the next local slot.
                 // Whether or not there is, the class goes on the stack next.
                 if let Some(superclass) = superclass {
@@ -271,6 +283,8 @@ impl<'strtable> Compiler<'strtable> {
                 if superclass.is_some() {
                     self.end_scope();
                 }
+
+                self.class_stack.pop();
             }
         };
 
@@ -406,15 +420,15 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::SetProperty(idx), line_no);
             }
             ast::ExprKind::This => {
-                if !self.get_ctx().function_type.in_class() {
+                if self.class_stack.is_empty() {
                     return Err(CompilerError::ThisOutsideClass);
                 }
                 self.get_variable(THIS_STR, line_no)?;
             }
             ast::ExprKind::Super(method_name) => {
-                if !self.get_ctx().function_type.in_class() {
-                    return Err(CompilerError::SuperOutsideClass);
-                }
+                // Check if we are in a class with a superclass
+                self.check_super_validity()?;
+
                 self.get_variable(THIS_STR, line_no)?;
                 self.get_variable(SUPER_STR, line_no)?;
 
@@ -548,9 +562,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
             ast::ExprKind::Super(method_name) => {
-                if !self.get_ctx().function_type.in_class() {
-                    return Err(CompilerError::SuperOutsideClass);
-                }
+                self.check_super_validity()?;
 
                 // We put the receiver on the stack, then all the arguments, then the superclass
                 let line_no = callee.span.lo.line_no;
@@ -663,6 +675,19 @@ impl<'strtable> Compiler<'strtable> {
         match self.context_stack.last_mut() {
             Some(state) => state,
             None => panic!("Context stack empty!"),
+        }
+    }
+
+    fn check_super_validity(&self) -> CompilerResult<()> {
+        match self.class_stack.last() {
+            Some(class) => {
+                if class.has_superclass {
+                    Ok(())
+                } else {
+                    Err(CompilerError::SuperWithoutSuperclass)
+                }
+            }
+            None => Err(CompilerError::SuperOutsideClass),
         }
     }
 

@@ -12,6 +12,7 @@ pub enum CompilerError {
     SelfInherit(String),
     ThisOutsideClass,
     SuperOutsideClass,
+    SuperWithoutSuperclass,
 }
 
 // TODO how can i get the failed instruction in here?
