@@ -1,1 +1,1 @@
-var a = a; // Error at 'a': Can't read local variable in its own initializer.
+var a = a; // expect runtime error: Undefined variable 'a'.
