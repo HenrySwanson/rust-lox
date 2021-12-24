@@ -36,14 +36,16 @@ fn run_from_prompt(mut interpreter: Box<dyn Runnable>) {
 
         loop {
             io::stdout().flush().unwrap();
-            let bytes_read = io::stdin()
-                .read_line(&mut input)
+            let mut new_line = String::new();
+            io::stdin()
+                .read_line(&mut new_line)
                 .expect("Failed to read line");
 
-            // If we get a blank line,
-            if bytes_read <= 1 {
+            // If we get a whitespace only line, break out
+            if new_line.trim().is_empty() {
                 break;
             }
+            input += &new_line;
 
             print!("  ");
         }
