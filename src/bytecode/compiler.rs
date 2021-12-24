@@ -223,15 +223,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.define_variable(&fn_decl.name, line_no)?;
             }
             ast::StmtKind::Return(expr) => {
-                match expr {
-                    Some(expr) => {
-                        self.compile_expression(expr)?;
-                    }
-                    None => {
-                        self.emit_implicit_return_arg(line_no);
-                    }
-                }
-                self.emit_op(RichOpcode::Return, line_no);
+                self.compile_return(expr.as_ref(), line_no)?;
             }
             ast::StmtKind::ClassDecl(name, superclass, methods) => {
                 self.declare_variable(name)?;
@@ -363,7 +355,7 @@ impl<'strtable> Compiler<'strtable> {
         // Compile the function body, and add an implicit return
         self.compile_statement(fn_decl.body.as_ref())?;
         let last_line = fn_decl.body.span.hi.line_no;
-        self.emit_implicit_return_arg(last_line);
+        self.compile_return(None, last_line)?;
         self.emit_op(RichOpcode::Return, last_line);
 
         // no need to end scope, we're just killing this compiler context completely
@@ -768,13 +760,25 @@ impl<'strtable> Compiler<'strtable> {
         Ok(VariableLocator::Upvalue(upvalue_idx))
     }
 
-    fn emit_implicit_return_arg(&mut self, line_no: usize) {
-        // this is pulled out into its own method so it can be called in two spots
-        if self.get_ctx().function_type == FunctionType::Initializer {
-            self.emit_op(RichOpcode::GetLocal(0), line_no);
-        } else {
-            self.emit_op(RichOpcode::Nil, line_no);
-        }
+    fn compile_return(&mut self, expr: Option<&ast::Expr>, line_no: usize) -> CompilerResult<()> {
+        // Emit the instructions to put the return value on the stack
+        match self.get_ctx().function_type {
+            FunctionType::Root => return Err(CompilerError::ReturnAtTopLevel),
+            FunctionType::Function | FunctionType::Method => match expr {
+                Some(expr) => self.compile_expression(expr)?,
+                None => self.emit_op(RichOpcode::Nil, line_no),
+            },
+            FunctionType::Initializer => {
+                if expr.is_some() {
+                    return Err(CompilerError::ReturnInInitializer);
+                } else {
+                    self.emit_op(RichOpcode::GetLocal(0), line_no);
+                }
+            }
+        };
+
+        self.emit_op(RichOpcode::Return, line_no);
+        Ok(())
     }
 
     // chunk-writing methods

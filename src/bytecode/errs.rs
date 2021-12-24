@@ -13,6 +13,8 @@ pub enum CompilerError {
     ThisOutsideClass,
     SuperOutsideClass,
     SuperWithoutSuperclass,
+    ReturnAtTopLevel,
+    ReturnInInitializer,
 }
 
 // TODO how can i get the failed instruction in here?
