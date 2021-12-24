@@ -31,6 +31,7 @@ enum VariableLocator {
 
 #[derive(PartialEq, Eq)]
 enum FunctionType {
+    Root,
     Function,
     Method,
     Initializer,
@@ -41,7 +42,7 @@ struct Context {
     locals: Vec<Local>,
     upvalues: Vec<UpvalueAddr>,
     scope_depth: u32,
-    is_initializer: bool,
+    function_type: FunctionType,
 }
 
 pub struct Compiler<'strtable> {
@@ -50,20 +51,36 @@ pub struct Compiler<'strtable> {
     context_stack: Vec<Context>,
 }
 
+impl FunctionType {
+    fn in_class(&self) -> bool {
+        match self {
+            FunctionType::Root | FunctionType::Function => false,
+            FunctionType::Method | FunctionType::Initializer => true,
+        }
+    }
+}
+
 impl Context {
-    fn new(reserved_id: &str) -> Self {
+    fn new(function_type: FunctionType) -> Self {
+        // TODO can we drop the ID for the non-class types?
+        let reserved_id = if function_type.in_class() {
+            THIS_STR
+        } else {
+            ""
+        };
         let reserved_local = Local {
             name: reserved_id.to_owned(),
             scope_depth: 0,
             initialized: true,
             captured: false,
         };
+
         Context {
             chunk: Chunk::new(),
             locals: vec![reserved_local],
             upvalues: vec![],
             scope_depth: 0,
-            is_initializer: false,
+            function_type,
         }
     }
 
@@ -137,7 +154,7 @@ impl<'strtable> Compiler<'strtable> {
 
     pub fn compile(&mut self, stmts: &[ast::Stmt]) -> CompilerResult<Chunk> {
         // Put in a fresh context
-        self.context_stack.push(Context::new(""));
+        self.context_stack.push(Context::new(FunctionType::Root));
 
         for stmt in stmts.iter() {
             self.compile_statement(stmt)?;
@@ -317,13 +334,7 @@ impl<'strtable> Compiler<'strtable> {
         fn_type: FunctionType,
     ) -> CompilerResult<()> {
         // Create the new compiler context
-        let mut new_context = Context::new(match fn_type {
-            FunctionType::Function => "",
-            FunctionType::Method | FunctionType::Initializer => THIS_STR,
-        });
-        if fn_type == FunctionType::Initializer {
-            new_context.is_initializer = true;
-        }
+        let new_context = Context::new(fn_type);
 
         self.context_stack.push(new_context);
         self.begin_scope();
@@ -395,9 +406,15 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::SetProperty(idx), line_no);
             }
             ast::ExprKind::This => {
+                if !self.get_ctx().function_type.in_class() {
+                    return Err(CompilerError::ThisOutsideClass);
+                }
                 self.get_variable(THIS_STR, line_no)?;
             }
             ast::ExprKind::Super(method_name) => {
+                if !self.get_ctx().function_type.in_class() {
+                    return Err(CompilerError::SuperOutsideClass);
+                }
                 self.get_variable(THIS_STR, line_no)?;
                 self.get_variable(SUPER_STR, line_no)?;
 
@@ -531,6 +548,10 @@ impl<'strtable> Compiler<'strtable> {
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
             ast::ExprKind::Super(method_name) => {
+                if !self.get_ctx().function_type.in_class() {
+                    return Err(CompilerError::SuperOutsideClass);
+                }
+
                 // We put the receiver on the stack, then all the arguments, then the superclass
                 let line_no = callee.span.lo.line_no;
                 self.get_variable(THIS_STR, line_no)?;
@@ -724,7 +745,7 @@ impl<'strtable> Compiler<'strtable> {
 
     fn emit_implicit_return_arg(&mut self, line_no: usize) {
         // this is pulled out into its own method so it can be called in two spots
-        if self.get_ctx().is_initializer {
+        if self.get_ctx().function_type == FunctionType::Initializer {
             self.emit_op(RichOpcode::GetLocal(0), line_no);
         } else {
             self.emit_op(RichOpcode::Nil, line_no);

@@ -10,6 +10,8 @@ pub enum CompilerError {
     TooManyUpvalues,
     JumpTooLong,
     SelfInherit(String),
+    ThisOutsideClass,
+    SuperOutsideClass,
 }
 
 // TODO how can i get the failed instruction in here?
