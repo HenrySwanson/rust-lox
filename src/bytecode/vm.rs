@@ -84,8 +84,18 @@ impl<T> SafeStack<T> {
         self.stack.len()
     }
 
+    fn depth(&self, depth: usize) -> RuntimeResult<usize> {
+        if depth < self.len() {
+            Ok(self.len() - 1 - depth)
+        } else {
+            Err(RuntimeError::InvalidStackDepth(depth))
+        }
+    }
+
     fn get(&self, idx: usize) -> RuntimeResult<&T> {
-        self.stack.get(idx).ok_or(RuntimeError::InvalidStackIndex)
+        self.stack
+            .get(idx)
+            .ok_or(RuntimeError::InvalidStackIndex(idx))
     }
 
     fn set(&mut self, idx: usize, item: T) -> RuntimeResult<()> {
@@ -94,25 +104,24 @@ impl<T> SafeStack<T> {
                 *slot = item;
                 Ok(())
             }
-            None => Err(RuntimeError::InvalidStackIndex),
+            None => Err(RuntimeError::InvalidStackIndex(idx)),
         }
     }
 
     fn peek(&self, depth: usize) -> RuntimeResult<&T> {
-        let stack_size = self.len();
-        self.get(stack_size - 1 - depth)
+        let idx = self.depth(depth)?;
+        self.get(idx)
     }
 
     fn set_back(&mut self, depth: usize, item: T) -> RuntimeResult<()> {
-        let stack_size = self.len();
-        self.set(stack_size - 1 - depth, item)
+        let idx = self.depth(depth)?;
+        self.set(idx, item)
     }
 
     fn peek_n(&self, depth: usize) -> RuntimeResult<&[T]> {
-        let start_idx = self.len() - depth;
-        self.stack
-            .get(start_idx..)
-            .ok_or(RuntimeError::InvalidStackIndex)
+        let start_idx = self.depth(depth)?;
+        // Open-ended range, must succeed
+        Ok(self.stack.get(start_idx..).unwrap())
     }
 
     fn push(&mut self, item: T) {
@@ -120,17 +129,13 @@ impl<T> SafeStack<T> {
     }
 
     fn pop(&mut self) -> RuntimeResult<T> {
-        self.stack.pop().ok_or(RuntimeError::StackEmpty)
+        self.stack.pop().ok_or(RuntimeError::StackUnderflow)
     }
 
     fn pop_n(&mut self, depth: usize) -> RuntimeResult<()> {
-        if depth > self.len() {
-            Err(RuntimeError::InvalidStackIndex)
-        } else {
-            let idx = self.len() - depth;
-            self.truncate(idx);
-            Ok(())
-        }
+        let idx = self.depth(depth)?;
+        self.truncate(idx);
+        Ok(())
     }
 
     fn truncate(&mut self, idx: usize) {

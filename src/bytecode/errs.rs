@@ -20,9 +20,10 @@ pub enum RuntimeError {
     IncorrectOperandTypeAdd,
     NonNumericOperandBinary,
     NonNumericOperandUnary,
-    StackEmpty,
+    StackUnderflow,
     StackOverflow,
-    InvalidStackIndex,
+    InvalidStackIndex(usize),
+    InvalidStackDepth(usize),
     UndefinedGlobal(String),
     NotACallable,
     WrongArity(usize, usize),
@@ -55,16 +56,21 @@ impl From<OpcodeError> for RuntimeError {
 impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RuntimeError::InvalidOpcode(_) => write!(f, "{:?}", self),
-            RuntimeError::DivideByZero => write!(f, "{:?}", self),
+            RuntimeError::InvalidOpcode(byte) => write!(f, "Unrecognized opcode {}.", byte),
+            RuntimeError::DivideByZero => write!(f, "Cannot divide by zero."),
             RuntimeError::IncorrectOperandTypeAdd => {
                 write!(f, "Operands must be two numbers or two strings.")
             }
             RuntimeError::NonNumericOperandBinary => write!(f, "Operands must be numbers."),
             RuntimeError::NonNumericOperandUnary => write!(f, "Operand must be a number."),
-            RuntimeError::StackEmpty => write!(f, "{:?}", self),
-            RuntimeError::StackOverflow => write!(f, "{:?}", self),
-            RuntimeError::InvalidStackIndex => write!(f, "{:?}", self),
+            RuntimeError::StackUnderflow => write!(f, "Stack underflow."),
+            RuntimeError::StackOverflow => write!(f, "Stack overflow."),
+            RuntimeError::InvalidStackIndex(idx) => {
+                write!(f, "Invalid stack access at index {}.", idx)
+            }
+            RuntimeError::InvalidStackDepth(depth) => {
+                write!(f, "Invalid stack access at depth {}.", depth)
+            }
             RuntimeError::UndefinedGlobal(var_name) => {
                 write!(f, "Undefined variable '{}'.", var_name)
             }
@@ -72,7 +78,10 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::WrongArity(expected, actual) => {
                 write!(f, "Expected {} arguments but got {}.", expected, actual)
             }
-            RuntimeError::NativeError(_) => write!(f, "{:?}", self),
+            RuntimeError::NativeError(err_msg) => {
+                write!(f, "Error when running native function: {}", err_msg)
+            }
+            // TODO: some of these i need to write messages for
             RuntimeError::UntranslatableConstant(_) => write!(f, "{:?}", self),
             RuntimeError::BadUpvalue => write!(f, "{:?}", self),
             RuntimeError::NotAClass => write!(f, "{:?}", self),
