@@ -8,9 +8,9 @@ use super::gc::{GcPtr, Traceable};
 use super::native::NativeFunction;
 use super::string_interning::InternedString;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum Value {
-    Number(i64), // TODO should be f64, just like Token::Number et al
+    Number(f64),
     Boolean(bool),
     Nil,
     String(InternedString),

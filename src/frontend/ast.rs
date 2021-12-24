@@ -9,13 +9,13 @@ pub struct Tree {
     pub statements: Vec<Stmt>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum StmtKind {
     Expression(Expr),
     Print(Expr),
@@ -28,13 +28,13 @@ pub enum StmtKind {
     ClassDecl(String, Option<String>, Vec<FunctionDecl>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ExprKind {
     Literal(Literal),
     BinOp(BinaryOperator, Box<Expr>, Box<Expr>),
@@ -49,15 +49,15 @@ pub enum ExprKind {
     Super(String),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
-    Number(u32),
+    Number(f64),
     Boolean(bool),
     Str(String),
     Nil,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<String>,

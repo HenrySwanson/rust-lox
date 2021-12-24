@@ -13,11 +13,6 @@ struct Expected {
 
 #[test_resources("tests/integration/**/*.lox")]
 fn test_bytecode_vm(filename: &str) {
-    // TODO this one's not working, go fix it
-    if filename.contains("nan_equality") {
-        return;
-    }
-
     let source = std::fs::read_to_string(filename).unwrap();
 
     // Get expected and real outputs

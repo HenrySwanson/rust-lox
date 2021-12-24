@@ -141,6 +141,18 @@ impl<'src> Lexer<'src> {
     fn lex_number(&mut self, start_idx: usize) -> Token {
         self.cursor.take_while(is_digit_char);
 
+        // Check for a fractional part
+        if let Some((_, '.')) = self.cursor.peek() {
+            if self
+                .cursor
+                .peek_next()
+                .map_or(false, |t| is_digit_char(t.1))
+            {
+                self.cursor.take();
+                self.cursor.take_while(is_digit_char);
+            }
+        }
+
         let end_idx = match self.cursor.peek() {
             Some((i, _)) => i,
             None => self.source.len(),
@@ -248,14 +260,14 @@ mod tests {
 
     #[test]
     fn test_literals() {
-        let tokens = lex("\"word\" \"hello world\" \"multi\nline\" 3 -4 104 identifier");
+        let tokens = lex("\"word\" \"hello world\" \"multi\nline\" 3 -4 104.1 identifier");
         assert_eq!(tokens[0].token, Token::String("word".to_owned()));
         assert_eq!(tokens[1].token, Token::String("hello world".to_owned()));
         assert_eq!(tokens[2].token, Token::String("multi\nline".to_owned()));
-        assert_eq!(tokens[3].token, Token::Number(3));
+        assert_eq!(tokens[3].token, Token::Number(3.0));
         assert_eq!(tokens[4].token, Token::Minus);
-        assert_eq!(tokens[5].token, Token::Number(4));
-        assert_eq!(tokens[6].token, Token::Number(104));
+        assert_eq!(tokens[5].token, Token::Number(4.0));
+        assert_eq!(tokens[6].token, Token::Number(104.1));
         assert_eq!(tokens[7].token, Token::Identifier("identifier".to_owned()));
         assert_eq!(tokens.len(), 8);
     }
@@ -285,16 +297,5 @@ mod tests {
             Token::Error("Unterminated string".to_owned())
         );
         assert_eq!(tokens.len(), 2);
-    }
-
-    #[test]
-    fn test_malformed_number() {
-        let tokens = lex("3 999999999999999999999999999999999999999 1");
-        let err_msg = "Unparsable integer `999999999999999999999999999999999999999`";
-
-        assert_eq!(tokens[0].token, Token::Number(3));
-        assert_eq!(tokens[1].token, Token::Error(err_msg.to_owned()));
-        assert_eq!(tokens[2].token, Token::Number(1));
-        assert_eq!(tokens.len(), 3);
     }
 }

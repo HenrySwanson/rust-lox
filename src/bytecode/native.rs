@@ -49,5 +49,5 @@ fn clock(_args: &[Value]) -> Result<Value, String> {
         .duration_since(UNIX_EPOCH)
         .expect("SystemTime before UNIX EPOCH!");
 
-    Ok(Value::Number(duration.as_secs() as i64))
+    Ok(Value::Number(duration.as_secs() as f64))
 }

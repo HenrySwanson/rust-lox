@@ -318,13 +318,6 @@ impl<W: std::io::Write> VM<W> {
                 RichOpcode::Subtract => self.arithmetic_binop(|a, b| a - b)?,
                 RichOpcode::Multiply => self.arithmetic_binop(|a, b| a * b)?,
                 RichOpcode::Divide => {
-                    // Check for zero
-                    if let Value::Number(n) = self.stack.peek(0)? {
-                        if *n == 0 {
-                            return Err(RuntimeError::DivideByZero);
-                        }
-                    }
-
                     self.arithmetic_binop(|a, b| a / b)?;
                 }
                 RichOpcode::Negate => match self.stack.peek(0)? {
@@ -899,7 +892,7 @@ impl<W: std::io::Write> VM<W> {
 
     fn numerical_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
-        F: Fn(i64, i64) -> Value,
+        F: Fn(f64, f64) -> Value,
     {
         let lhs = self.stack.peek(1)?;
         let rhs = self.stack.peek(0)?;
@@ -918,14 +911,14 @@ impl<W: std::io::Write> VM<W> {
 
     fn arithmetic_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
-        F: Fn(i64, i64) -> i64,
+        F: Fn(f64, f64) -> f64,
     {
         self.numerical_binop(|a, b| Value::Number(closure(a, b)))
     }
 
     fn comparison_binop<F>(&mut self, closure: F) -> RuntimeResult<()>
     where
-        F: Fn(i64, i64) -> bool,
+        F: Fn(f64, f64) -> bool,
     {
         self.numerical_binop(|a, b| Value::Boolean(closure(a, b)))
     }

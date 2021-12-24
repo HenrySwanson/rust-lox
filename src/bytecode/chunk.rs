@@ -11,7 +11,7 @@ use super::string_interning::InternedString;
 // We do allow string interning though, just for convenience.
 #[derive(Clone)]
 pub enum ChunkConstant {
-    Number(u32),
+    Number(f64),
     String(InternedString),
     FnTemplate {
         name: InternedString,

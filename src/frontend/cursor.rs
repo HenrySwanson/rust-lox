@@ -2,6 +2,7 @@ use super::span::CodePosition;
 use std::iter::Peekable;
 use std::str::CharIndices;
 
+#[derive(Debug, Clone)]
 pub struct Cursor<'src> {
     char_iterator: Peekable<CharIndices<'src>>,
     position: CodePosition,
@@ -25,6 +26,13 @@ impl<'src> Cursor<'src> {
     /// byte-position and the value of the character.
     pub fn peek(&mut self) -> Option<(usize, char)> {
         self.char_iterator.peek().copied()
+    }
+
+    pub fn peek_next(&mut self) -> Option<(usize, char)> {
+        // TODO this could be non-mut. Strange for peek to be mut and peek_next not to be though...
+        let mut cl = self.clone();
+        cl.take();
+        cl.peek()
     }
 
     /// Consumes the next character, returning the byte-position and the value

@@ -1,6 +1,6 @@
 use super::span::Span;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Single-character tokens
     LeftParen,
@@ -28,7 +28,7 @@ pub enum Token {
     // Literals
     Identifier(String),
     String(String),
-    Number(u32), // TODO f64, but that doesn't work with Eq
+    Number(f64),
 
     // Keywords
     And,
