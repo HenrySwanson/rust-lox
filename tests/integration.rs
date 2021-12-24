@@ -67,7 +67,7 @@ fn run_source_on_vm(source: &str) -> Expected {
 fn get_expected_output(source: &str) -> Expected {
     let output_regex = Regex::new(r"// expect: (.*)$").unwrap();
     let runtime_err_regex = Regex::new(r"// expect runtime error: (.*)$").unwrap();
-    let compile_err_regex = Regex::new(r"// (\[line \d+\] )?(Error .*)").unwrap();
+    let compile_err_regex = Regex::new(r"// (\[line \d+\] )?(Error.*)").unwrap();
 
     let mut ex = Expected {
         compiled: true,

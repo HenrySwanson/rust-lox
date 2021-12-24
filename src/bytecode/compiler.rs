@@ -56,23 +56,14 @@ pub struct Compiler<'strtable> {
     class_stack: Vec<ClassContext>,
 }
 
-impl FunctionType {
-    // TODO destroy
-    fn in_class(&self) -> bool {
-        match self {
-            FunctionType::Root | FunctionType::Function => false,
-            FunctionType::Method | FunctionType::Initializer => true,
-        }
-    }
-}
-
 impl Context {
     fn new(function_type: FunctionType) -> Self {
         // TODO can we drop the ID for the non-class types?
-        let reserved_id = if function_type.in_class() {
-            THIS_STR
-        } else {
-            ""
+        let reserved_id = match function_type {
+            // The first item on the stack is the function itself
+            FunctionType::Root | FunctionType::Function => "",
+            // The first item on the stack is `this`
+            FunctionType::Method | FunctionType::Initializer => THIS_STR,
         };
         let reserved_local = Local {
             name: reserved_id.to_owned(),
