@@ -91,7 +91,7 @@ impl<W: std::io::Write> Runnable for Interpreter<W> {
         };
 
         // And evaluate the statements
-        match self.eval_statements(tree.statements) {
+        match self.eval_statements(&tree.statements) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("{:?}", e)),
         }

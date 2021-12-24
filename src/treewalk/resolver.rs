@@ -289,7 +289,11 @@ impl Resolver {
             self.define(name);
         }
 
-        let resolved_body = Box::new(self.resolve_statement(&fn_data.body)?);
+        let resolved_body = fn_data
+            .body
+            .iter()
+            .map(|stmt| self.resolve_statement(stmt))
+            .collect::<ResolveResult<_>>()?;
 
         // Reverse the previous steps
         self.function_ctx = prev_ctx;

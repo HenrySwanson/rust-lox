@@ -165,14 +165,9 @@ impl<'src> Parser<'src> {
         let name = self.parse_identifier()?;
         let params = self.parse_fn_params()?;
 
-        // TODO: this shouldn't be necessary
-        let lo = self.current.span;
-        let body = self.parse_block_statement()?;
-        let hi = self.previous.span;
+        let stmts = self.parse_braced_statement_list()?;
 
-        let body = mk_stmt(body, lo.to(hi));
-
-        let fn_data = ast::FunctionDecl::new(name, params, body);
+        let fn_data = ast::FunctionDecl::new(name, params, stmts);
         Ok(fn_data)
     }
 
@@ -220,7 +215,10 @@ impl<'src> Parser<'src> {
             Token::While => self.parse_while_statement(),
             Token::For => self.parse_for_statement(),
             Token::Return => self.parse_return_statement(),
-            Token::LeftBrace => self.parse_block_statement(),
+            Token::LeftBrace => {
+                let stmts = self.parse_braced_statement_list()?;
+                Ok(ast::StmtKind::Block(stmts))
+            }
             _ => {
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)?;
@@ -331,7 +329,7 @@ impl<'src> Parser<'src> {
         Ok(ast::StmtKind::Return(expr))
     }
 
-    fn parse_block_statement(&mut self) -> ParseResult<ast::StmtKind> {
+    fn parse_braced_statement_list(&mut self) -> ParseResult<Vec<ast::Stmt>> {
         let mut stmts = vec![];
 
         self.eat(Token::LeftBrace)?;
@@ -339,7 +337,7 @@ impl<'src> Parser<'src> {
             stmts.push(self.parse_spanned_declaration()?);
         }
 
-        Ok(ast::StmtKind::Block(stmts))
+        Ok(stmts)
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {

@@ -51,7 +51,7 @@ impl LoxFunctionPtr {
         // Return behaves like an error in that it propagates upwards
         // until we catch it. Catch it here.
         let old_env = interpreter.swap_environment(env);
-        let result = match interpreter.eval_statement(&self.0.fn_data.body) {
+        let result = match interpreter.eval_statements(&self.0.fn_data.body) {
             Ok(_) => Ok(Object::Nil),
             Err(Error::Return(obj)) => Ok(obj),
             Err(e) => Err(e),

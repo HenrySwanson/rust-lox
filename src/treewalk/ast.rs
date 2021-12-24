@@ -74,5 +74,5 @@ pub struct VariableRef {
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Box<Stmt>,
+    pub body: Vec<Stmt>,
 }

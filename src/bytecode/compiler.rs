@@ -15,6 +15,7 @@ const SUPER_STR: &str = "super";
 
 // Describes the information of a local variable (a variable declared in
 // the current context).
+#[derive(Debug)]
 struct Local {
     name: String,
     scope_depth: u32,
@@ -254,10 +255,11 @@ impl<'strtable> Compiler<'strtable> {
                     } else {
                         FunctionType::Method
                     };
-                    self.compile_function_decl(&method, method.body.span.lo.line_no, fn_type)?;
+                    // TODO deal with function decl span better
+                    self.compile_function_decl(&method, 0, fn_type)?;
 
                     let idx = self.add_string_constant(&method.name)?;
-                    self.emit_op(RichOpcode::MakeMethod(idx), method.body.span.hi.line_no);
+                    self.emit_op(RichOpcode::MakeMethod(idx), 0);
                 }
 
                 // Pop the class off the stack
@@ -344,8 +346,11 @@ impl<'strtable> Compiler<'strtable> {
         }
 
         // Compile the function body, and add an implicit return
-        self.compile_statement(fn_decl.body.as_ref())?;
-        let last_line = fn_decl.body.span.hi.line_no;
+        for stmt in fn_decl.body.iter() {
+            self.compile_statement(stmt)?;
+        }
+        // TODO: deal with the empty function better!
+        let last_line = fn_decl.body.last().map_or(0, |stmt| stmt.span.hi.line_no);
         self.compile_return(None, last_line)?;
         self.emit_op(RichOpcode::Return, last_line);
 

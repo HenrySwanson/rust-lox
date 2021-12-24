@@ -43,7 +43,7 @@ impl<W: std::io::Write> Interpreter<W> {
         env // which is now the old self.env
     }
 
-    pub fn eval_statements(&mut self, stmts: Vec<ast::Stmt>) -> RuntimeResult<()> {
+    pub fn eval_statements(&mut self, stmts: &[ast::Stmt]) -> RuntimeResult<()> {
         for stmt in stmts.iter() {
             self.eval_statement(stmt)?;
         }

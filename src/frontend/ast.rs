@@ -61,7 +61,7 @@ pub enum Literal {
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<String>,
-    pub body: Box<Stmt>,
+    pub body: Vec<Stmt>,
 }
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum UnaryOperator {
@@ -149,12 +149,8 @@ impl Expr {
 }
 
 impl FunctionDecl {
-    pub fn new(name: String, params: Vec<String>, body: Stmt) -> Self {
-        FunctionDecl {
-            name,
-            params,
-            body: Box::new(body),
-        }
+    pub fn new(name: String, params: Vec<String>, body: Vec<Stmt>) -> Self {
+        FunctionDecl { name, params, body }
     }
 }
 
