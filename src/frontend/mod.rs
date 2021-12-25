@@ -7,5 +7,6 @@ mod precedence;
 pub mod span;
 mod token;
 
+pub use errs::{Error, ParseResult};
 pub use lexer::Lexer;
 pub use parser::Parser;
