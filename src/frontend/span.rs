@@ -5,6 +5,7 @@ use std::fmt;
 /// b) the derived Ord traits work the way you expect
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct CodePosition {
+    pub byte_pos: usize,
     pub line_no: usize,
     pub column_no: usize,
 }
@@ -16,8 +17,31 @@ pub struct Span {
 }
 
 impl CodePosition {
-    pub fn new(line_no: usize, column_no: usize) -> Self {
-        CodePosition { line_no, column_no }
+    pub fn new(byte_pos: usize, line_no: usize, column_no: usize) -> Self {
+        CodePosition {
+            byte_pos,
+            line_no,
+            column_no,
+        }
+    }
+
+    pub fn from_byte_pos(source: &str, byte_pos: usize) -> Option<Self> {
+        let mut line_no = 1;
+        let mut col_no = 1;
+        for ch in source.get(..byte_pos)?.chars() {
+            if ch == '\n' {
+                line_no += 1;
+                col_no = 1;
+            } else {
+                col_no += 1;
+            }
+        }
+
+        Some(CodePosition {
+            byte_pos,
+            line_no,
+            column_no: col_no,
+        })
     }
 }
 
@@ -36,7 +60,7 @@ impl Span {
     }
 
     pub fn dummy() -> Self {
-        let zero_pos = CodePosition::new(0, 0);
+        let zero_pos = CodePosition::new(0, 0, 0);
         Span::new(zero_pos, zero_pos)
     }
 
@@ -46,6 +70,10 @@ impl Span {
             std::cmp::max(self.hi, other.hi),
         )
     }
+
+    pub fn extract_string<'a>(&self, source: &'a str) -> Option<&'a str> {
+        source.get(self.lo.byte_pos..self.hi.byte_pos)
+    }
 }
 
 #[cfg(test)]
@@ -53,36 +81,45 @@ mod tests {
     use super::*;
     use ::more_asserts::*;
 
+    const SAMPLE_TEXT: &str = "Some example text.\nA second line.\n  Something indented.";
+
     #[test]
-    fn code_position_ordering() {
-        let a = CodePosition::new(2, 7);
-        let b = CodePosition::new(4, 1);
-        assert_le!(a, a);
-        assert_ge!(a, a);
-        assert_lt!(a, b);
+    fn line_and_column() {
+        let a = CodePosition::from_byte_pos(SAMPLE_TEXT, 0).unwrap();
+        assert_eq!(a, CodePosition::new(0, 1, 1));
+
+        let a = CodePosition::from_byte_pos(SAMPLE_TEXT, 5).unwrap();
+        assert_eq!(a, CodePosition::new(5, 1, 6));
+
+        let a = CodePosition::from_byte_pos(SAMPLE_TEXT, 19).unwrap();
+        assert_eq!(a, CodePosition::new(19, 2, 1));
+
+        let a = CodePosition::from_byte_pos(SAMPLE_TEXT, 36).unwrap();
+        assert_eq!(a, CodePosition::new(36, 3, 3));
     }
 
     #[test]
-    fn unite_spans() {
-        // Consider the following file. Capital letters start the span,
-        // small letters end them.
-        //
-        //   1 2 3 4 5 6 7 8 9
-        // 1 - - - - - - D - -
-        // 2 A - - - - - - - -
-        // 3 - - - - - a B - -
-        // 4 - - - - - - - - -
-        // 5 - b C - - - - - -
-        // 6 - - - d - - c - -
+    fn extract_string() {
+        fn get_span(lo: usize, hi: usize) -> Span {
+            Span::new(
+                CodePosition::from_byte_pos(SAMPLE_TEXT, lo).unwrap(),
+                CodePosition::from_byte_pos(SAMPLE_TEXT, hi).unwrap(),
+            )
+        }
+        assert_eq!(get_span(0, 4).extract_string(SAMPLE_TEXT).unwrap(), "Some");
+        assert_eq!(get_span(1, 4).extract_string(SAMPLE_TEXT).unwrap(), "ome");
+        assert_eq!(
+            get_span(13, 27).extract_string(SAMPLE_TEXT).unwrap(),
+            "text.\nA second"
+        );
+    }
 
-        let a = Span::new(CodePosition::new(2, 1), CodePosition::new(3, 6));
-        let b = Span::new(CodePosition::new(3, 7), CodePosition::new(5, 2));
-        let c = Span::new(CodePosition::new(5, 3), CodePosition::new(6, 7));
-        let d = Span::new(CodePosition::new(1, 7), CodePosition::new(6, 4));
-
-        assert_eq!(a.to(b), Span::new(a.lo, b.hi));
-        assert_eq!(a.to(c), Span::new(a.lo, c.hi));
-        assert_eq!(a.to(d), d);
-        assert_eq!(b.to(c), c.to(b));
+    #[test]
+    fn code_position_ordering() {
+        let a = CodePosition::new(12, 2, 7);
+        let b = CodePosition::new(14, 4, 1);
+        assert_le!(a, a);
+        assert_ge!(a, a);
+        assert_lt!(a, b);
     }
 }

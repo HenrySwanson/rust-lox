@@ -13,7 +13,7 @@ impl<'src> Cursor<'src> {
     pub fn new(source: &'src str) -> Self {
         Cursor {
             char_iterator: source.char_indices().peekable(),
-            position: CodePosition::new(1, 1),
+            position: CodePosition::new(0, 1, 1),
         }
     }
 
@@ -45,6 +45,7 @@ impl<'src> Cursor<'src> {
 
         // TODO how does this work for multi-byte chars?
         // Advance the peek position
+        self.position.byte_pos = byte_idx;
         if ch == '\n' {
             self.position.line_no += 1;
             self.position.column_no = 1;
