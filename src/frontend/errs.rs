@@ -1,8 +1,6 @@
 use super::span::Span;
 use super::token::Token;
 
-use std::fmt;
-
 pub const MAX_NUMBER_ARGS: usize = 256;
 
 #[derive(Debug)]
@@ -17,41 +15,41 @@ pub enum Error {
 
 pub type ParseResult<T> = Result<T, Error>;
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Error {
+    pub fn render(&self, source: &str) -> String {
         match self {
             Error::IllegalToken(span, string) => {
-                write!(f, "Illegal token {} on line {}", string, span.lo.line_no)
+                format!("Illegal token {} on line {}", string, span.lo.line_no)
             }
             Error::ExpectedTokenAt(expected, span, got) => {
-                write!(
-                    f,
+                format!(
                     "Expected {:?} on line {}, got {:?}",
                     expected, span.lo.line_no, got
                 )
             }
-            Error::ExpectedExprAt(span, got) => {
-                write!(
-                    f,
-                    "Expected expression on line {}, got {:?}",
-                    span.lo.line_no, got
+            Error::ExpectedExprAt(span, _) => {
+                format!(
+                    "Error at '{}': Expect expression.",
+                    span.extract_string(&source).unwrap(),
                 )
             }
             Error::ExpectedIdentifier(span) => {
-                write!(f, "Expected identifier on line {}", span.lo.line_no)
+                format!(
+                    "Error at '{}': Expect variable name.",
+                    span.extract_string(source).unwrap()
+                )
             }
             Error::ExpectedLValue(span) => {
-                write!(
-                    f,
+                format!(
                     "Expected something assignable on the LHS on line {}",
                     span.lo.line_no
                 )
             }
             Error::TooManyArgs(span) => {
-                write!(
-                    f,
-                    "Too many arguments to function on line {}. Lox supports only {} arguments",
-                    span.lo.line_no, MAX_NUMBER_ARGS,
+                format!(
+                    "Error at '{}': Can't have more than {} parameters",
+                    span.extract_string(source).unwrap(),
+                    MAX_NUMBER_ARGS,
                 )
             }
         }

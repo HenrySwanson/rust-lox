@@ -71,7 +71,7 @@ fn run(interpreter: &mut dyn Runnable, source: String) {
         Err(errors) => {
             eprintln!("Parse errors:");
             for e in errors {
-                eprintln!("{}", e)
+                eprintln!("{}", e.render(&source))
             }
         }
     }

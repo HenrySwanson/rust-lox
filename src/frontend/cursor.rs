@@ -4,6 +4,7 @@ use std::str::CharIndices;
 
 #[derive(Debug, Clone)]
 pub struct Cursor<'src> {
+    source: &'src str,
     char_iterator: Peekable<CharIndices<'src>>,
     position: CodePosition,
 }
@@ -12,6 +13,7 @@ impl<'src> Cursor<'src> {
     /// Creates a character stream for the given source string
     pub fn new(source: &'src str) -> Self {
         Cursor {
+            source,
             char_iterator: source.char_indices().peekable(),
             position: CodePosition::new(0, 1, 1),
         }
@@ -43,9 +45,10 @@ impl<'src> Cursor<'src> {
             Some(t) => t,
         };
 
-        // TODO how does this work for multi-byte chars?
+        // TODO wow this is messy. I really should implement a better string cursor.
+        // Aware of lines, byte position, and can take a step back (instead of peek, I suppose).
         // Advance the peek position
-        self.position.byte_pos = byte_idx;
+        self.position.byte_pos = self.peek().map(|(idx, _)| idx).unwrap_or(self.source.len());
         if ch == '\n' {
             self.position.line_no += 1;
             self.position.column_no = 1;

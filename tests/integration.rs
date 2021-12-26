@@ -40,7 +40,9 @@ fn run_source_on_vm(source: &str) -> Expected {
     let parser = Parser::new(&source);
     let tree = match parser.parse_all() {
         Ok(tree) => tree,
-        Err(_) => return result,
+        Err(_) => {
+            return result;
+        }
     };
 
     let mut compiler = Compiler::new(vm.borrow_string_table());
