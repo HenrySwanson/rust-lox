@@ -9,7 +9,7 @@ pub enum Error {
     ExpectedTokenAt(Token, Span, Token),
     ExpectedExprAt(Span, Token),
     ExpectedIdentifier(Span),
-    ExpectedLValue(Span),
+    InvalidAssignment(Span),
     TooManyArgs(Span),
 }
 
@@ -39,10 +39,10 @@ impl Error {
                     span.extract_string(source).unwrap()
                 )
             }
-            Error::ExpectedLValue(span) => {
+            Error::InvalidAssignment(span) => {
                 format!(
-                    "Expected something assignable on the LHS on line {}",
-                    span.lo.line_no
+                    "Error at '{}': Invalid assignment target.",
+                    span.extract_string(source).unwrap()
                 )
             }
             Error::TooManyArgs(span) => {

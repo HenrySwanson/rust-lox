@@ -376,6 +376,8 @@ impl<'src> Parser<'src> {
                 break;
             }
 
+            let op_span = self.current.span;
+
             // Consume the operator token.
             // (for Call, we call parse_fn_args later, we shouldn't consume the
             // left parenthesis. This is gross though. :\ TODO: fix)
@@ -407,7 +409,7 @@ impl<'src> Parser<'src> {
                         ast::ExprKind::Get(expr, property) => {
                             ast::ExprKind::Set(expr, property, rhs_box)
                         }
-                        _ => return Err(Error::ExpectedLValue(lhs.span)),
+                        _ => return Err(Error::InvalidAssignment(op_span)),
                     }
                 }
                 InfixOperator::Call => {
