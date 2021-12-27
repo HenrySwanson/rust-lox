@@ -11,6 +11,7 @@ pub enum Error {
     ExpectedIdentifier(Span),
     InvalidAssignment(Span),
     TooManyArgs(Span),
+    UnclosedDelimiterAtEof,
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -51,6 +52,9 @@ impl Error {
                     span.extract_string(source).unwrap(),
                     MAX_NUMBER_ARGS,
                 )
+            }
+            Error::UnclosedDelimiterAtEof => {
+                format!("Error at end: Expected }}")
             }
         }
     }

@@ -11,6 +11,8 @@ pub struct Parser<'a> {
 
     current: SpannedToken,  // first unconsumed token
     previous: SpannedToken, // last consumed token
+
+    errors: Vec<Error>,
 }
 
 impl<'src> Parser<'src> {
@@ -25,6 +27,7 @@ impl<'src> Parser<'src> {
             lexer: Lexer::new(source),
             current: fake_token.clone(),
             previous: fake_token,
+            errors: vec![],
         };
 
         // "Prime the pump" and return
@@ -83,29 +86,24 @@ impl<'src> Parser<'src> {
     // ---- parsing methods ----
 
     pub fn parse_all(mut self) -> Result<ast::Tree, Vec<Error>> {
+        // TODO: the changes in synchronize affect this code. re-think it
+
         let mut stmts = vec![];
-        let mut errors = vec![];
 
         while !self.check(Token::EndOfFile) {
-            let result = self.parse_spanned_declaration();
-
-            match result {
-                Ok(stmt) => stmts.push(stmt),
-                Err(e) => {
-                    errors.push(e);
-                    self.synchronize(&mut errors);
-                }
+            if let Some(stmt) = self.parse_spanned_declaration() {
+                stmts.push(stmt);
             }
         }
 
-        if errors.is_empty() {
+        if self.errors.is_empty() {
             Ok(ast::Tree { statements: stmts })
         } else {
-            Err(errors)
+            Err(self.errors)
         }
     }
 
-    fn synchronize(&mut self, errors: &mut Vec<Error>) {
+    fn synchronize(&mut self) {
         // Consume until we see a semicolon or EOF
         let mut synchronization_point = false;
 
@@ -117,22 +115,30 @@ impl<'src> Parser<'src> {
             }
 
             // Always consume the token
-            match self.bump() {
-                Ok(_) => {}
-                Err(e) => errors.push(e),
-            }
+            std::mem::drop(self.bump());
         }
     }
 
-    fn parse_spanned_declaration(&mut self) -> ParseResult<ast::Stmt> {
+    fn emit_error(&mut self, err: Error) {
+        self.errors.push(err);
+    }
+
+    fn parse_spanned_declaration(&mut self) -> Option<ast::Stmt> {
         let lo = self.current.span;
-        let decl = self.parse_declaration_nospan()?;
+        let decl = self.parse_declaration_nospan();
         let hi = self.previous.span;
 
-        Ok(ast::Stmt {
-            kind: decl,
-            span: lo.to(hi),
-        })
+        match decl {
+            Ok(stmt) => Some(ast::Stmt {
+                kind: stmt,
+                span: lo.to(hi),
+            }),
+            Err(err) => {
+                self.emit_error(err);
+                self.synchronize();
+                None
+            }
+        }
     }
 
     fn parse_declaration_nospan(&mut self) -> ParseResult<ast::StmtKind> {
@@ -265,7 +271,7 @@ impl<'src> Parser<'src> {
         let initializer = if self.try_eat(Token::Semicolon) {
             None
         } else if self.check(Token::Var) {
-            Some(self.parse_spanned_declaration()?)
+            self.parse_spanned_declaration()
         } else {
             let lo = self.current.span;
             let expr = self.parse_expression()?;
@@ -333,11 +339,19 @@ impl<'src> Parser<'src> {
         let mut stmts = vec![];
 
         self.eat(Token::LeftBrace)?;
-        while !self.try_eat(Token::RightBrace) {
-            stmts.push(self.parse_spanned_declaration()?);
+        while !self.check(Token::RightBrace) && !self.check(Token::EndOfFile) {
+            if let Some(stmt) = self.parse_spanned_declaration() {
+                stmts.push(stmt);
+            }
         }
 
-        Ok(stmts)
+        if self.current.token != Token::EndOfFile {
+            // This must be a `}`, because of the loop condition.
+            self.eat(Token::RightBrace).unwrap();
+            Ok(stmts)
+        } else {
+            Err(Error::UnclosedDelimiterAtEof)
+        }
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
@@ -409,7 +423,9 @@ impl<'src> Parser<'src> {
                         ast::ExprKind::Get(expr, property) => {
                             ast::ExprKind::Set(expr, property, rhs_box)
                         }
-                        _ => return Err(Error::InvalidAssignment(op_span)),
+                        _ => {
+                            return Err(Error::InvalidAssignment(op_span));
+                        }
                     }
                 }
                 InfixOperator::Call => {
