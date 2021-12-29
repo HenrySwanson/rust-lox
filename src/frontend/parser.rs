@@ -70,6 +70,8 @@ impl<'src> Parser<'src> {
 
     /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token) -> ParseResult<()> {
+        // TODO: take in a closure for producing the error. the closure takes the SpannedToken
+        // that didn't match.
         self.bump()?;
 
         if self.previous.token == expected {
@@ -230,7 +232,8 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 let expr = self.parse_expression()?;
-                self.eat(Token::Semicolon)?;
+                self.eat(Token::Semicolon)
+                    .map_err(|_| Error::SemiAfterExpression(self.previous.span))?;
                 Ok(ast::StmtKind::Expression(expr))
             }
         }

@@ -13,6 +13,7 @@ pub enum Error {
     TooManyArgs(Span),
     UnclosedDelimiterAtEof,
     FunctionBodyStart(Span),
+    SemiAfterExpression(Span),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -59,6 +60,10 @@ impl Error {
             }
             Error::FunctionBodyStart(span) => format!(
                 "Error at '{}': Expect '{{' before function body.",
+                span.extract_string(source).unwrap(),
+            ),
+            Error::SemiAfterExpression(span) => format!(
+                "Error at '{}': Expect ';' after expression.",
                 span.extract_string(source).unwrap(),
             ),
         }
