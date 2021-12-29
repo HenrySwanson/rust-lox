@@ -181,12 +181,12 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_expression(expr)?;
                 self.emit_op(RichOpcode::Print, line_no);
             }
-            ast::StmtKind::VariableDecl(name, expr) => {
+            ast::StmtKind::VariableDecl(ident, expr) => {
                 // Create instructions to put the value of expr on top of the stack
                 self.compile_expression(expr)?;
 
-                self.declare_variable(name)?;
-                self.define_variable(name, line_no)?;
+                self.declare_variable(&ident.name)?;
+                self.define_variable(&ident.name, line_no)?;
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
@@ -204,7 +204,7 @@ impl<'strtable> Compiler<'strtable> {
             ast::StmtKind::FunctionDecl(fn_decl) => {
                 // Functions are allowed to refer to themselves; create a local with the
                 // appropriate name before actually compiling the function.
-                self.declare_variable(&fn_decl.name)?;
+                self.declare_variable(&fn_decl.ident.name)?;
                 if self.get_ctx().scope_depth != 0 {
                     self.get_ctx_mut().mark_last_local_initialized();
                 }
@@ -212,18 +212,18 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_function_decl(fn_decl, line_no, FunctionType::Function)?;
 
                 // Lastly, define the function variable
-                self.define_variable(&fn_decl.name, line_no)?;
+                self.define_variable(&fn_decl.ident.name, line_no)?;
             }
             ast::StmtKind::Return(expr) => {
                 self.compile_return(expr.as_ref(), line_no)?;
             }
-            ast::StmtKind::ClassDecl(name, superclass, methods) => {
-                self.declare_variable(name)?;
+            ast::StmtKind::ClassDecl(ident, superclass, methods) => {
+                self.declare_variable(&ident.name)?;
 
                 // Store the name as a constant
-                let idx = self.add_string_constant(name)?;
+                let idx = self.add_string_constant(&ident.name)?;
                 self.emit_op(RichOpcode::MakeClass(idx), line_no);
-                self.define_variable(name, line_no)?;
+                self.define_variable(&ident.name, line_no)?;
 
                 // Push the class context onto the stack
                 self.class_stack.push(ClassContext {
@@ -233,24 +233,24 @@ impl<'strtable> Compiler<'strtable> {
                 // If there's a superclass, load it in the next local slot.
                 // Whether or not there is, the class goes on the stack next.
                 if let Some(superclass) = superclass {
-                    if superclass == name {
-                        return Err(CompilerError::SelfInherit(name.to_owned()));
+                    if superclass.name == ident.name {
+                        return Err(CompilerError::SelfInherit(ident.name.clone()));
                     }
 
                     self.begin_scope();
                     self.declare_variable(SUPER_STR)?;
                     self.define_variable(SUPER_STR, line_no)?;
 
-                    self.get_variable(superclass, line_no)?;
-                    self.get_variable(name, line_no)?;
+                    self.get_variable(&superclass.name, line_no)?;
+                    self.get_variable(&ident.name, line_no)?;
                     self.emit_op(RichOpcode::Inherit, line_no);
                 } else {
-                    self.get_variable(name, line_no)?;
+                    self.get_variable(&ident.name, line_no)?;
                 }
 
                 // Deal with the methods
                 for method in methods.iter() {
-                    let fn_type = if method.name == "init" {
+                    let fn_type = if method.ident.name == "init" {
                         FunctionType::Initializer
                     } else {
                         FunctionType::Method
@@ -258,7 +258,7 @@ impl<'strtable> Compiler<'strtable> {
                     // TODO deal with function decl span better
                     self.compile_function_decl(method, 0, fn_type)?;
 
-                    let idx = self.add_string_constant(&method.name)?;
+                    let idx = self.add_string_constant(&method.ident.name)?;
                     self.emit_op(RichOpcode::MakeMethod(idx), 0);
                 }
 
@@ -341,8 +341,8 @@ impl<'strtable> Compiler<'strtable> {
         // Declare+define the arguments
         for param in fn_decl.params.iter() {
             // Unlike normal local variables, we don't compile any expressions here
-            self.declare_variable(param)?;
-            self.define_variable(param, line_no)?;
+            self.declare_variable(&param.name)?;
+            self.define_variable(&param.name, line_no)?;
         }
 
         // Compile the function body, and add an implicit return
@@ -357,11 +357,11 @@ impl<'strtable> Compiler<'strtable> {
         // no need to end scope, we're just killing this compiler context completely
         let ctx = self.context_stack.pop().expect("Context stack empty!");
 
-        self.print_chunk(&fn_decl.name, &ctx.chunk); // for debugging
+        self.print_chunk(&fn_decl.ident.name, &ctx.chunk); // for debugging
 
         // Build the function template and stash it in the chunk
         let fn_template = ChunkConstant::FnTemplate {
-            name: self.string_table.get_interned(&fn_decl.name),
+            name: self.string_table.get_interned(&fn_decl.ident.name),
             arity: fn_decl.params.len(),
             chunk: Rc::new(ctx.chunk),
             upvalue_count: ctx.upvalues.len(),
@@ -396,13 +396,13 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_or(lhs, rhs)?
             }
             ast::ExprKind::Call(callee, args) => self.compile_call(callee, args)?,
-            ast::ExprKind::Get(expr, name) => {
-                let idx = self.add_string_constant(name)?;
+            ast::ExprKind::Get(expr, property) => {
+                let idx = self.add_string_constant(&property.name)?;
                 self.compile_expression(expr)?;
                 self.emit_op(RichOpcode::GetProperty(idx), line_no);
             }
-            ast::ExprKind::Set(expr, name, value_expr) => {
-                let idx = self.add_string_constant(name)?;
+            ast::ExprKind::Set(expr, property, value_expr) => {
+                let idx = self.add_string_constant(&property.name)?;
                 self.compile_expression(expr)?;
                 self.compile_expression(value_expr)?;
                 self.emit_op(RichOpcode::SetProperty(idx), line_no);
@@ -420,7 +420,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.get_variable(THIS_STR, line_no)?;
                 self.get_variable(SUPER_STR, line_no)?;
 
-                let idx = self.add_string_constant(method_name)?;
+                let idx = self.add_string_constant(&method_name.name)?;
                 self.emit_op(RichOpcode::GetSuper(idx), line_no);
             }
         };
@@ -545,7 +545,7 @@ impl<'strtable> Compiler<'strtable> {
 
                 // Then we emit the OP_INVOKE
                 let line_no = callee.span.hi.line_no;
-                let idx = self.add_string_constant(method_name)?;
+                let idx = self.add_string_constant(&method_name.name)?;
 
                 self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
             }
@@ -562,7 +562,7 @@ impl<'strtable> Compiler<'strtable> {
 
                 // Then we emit the OP_SUPER_INVOKE
                 let line_no = callee.span.hi.line_no;
-                let idx = self.add_string_constant(method_name)?;
+                let idx = self.add_string_constant(&method_name.name)?;
 
                 self.emit_op(RichOpcode::SuperInvoke(idx, num_args), line_no);
             }

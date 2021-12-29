@@ -75,7 +75,9 @@ impl Resolver {
             frontend_ast::StmtKind::Print(expr) => {
                 ast::StmtKind::Print(self.resolve_expression(expr)?)
             }
-            frontend_ast::StmtKind::VariableDecl(name, expr) => {
+            frontend_ast::StmtKind::VariableDecl(ident, expr) => {
+                let name = &ident.name;
+
                 // Declare, resolve, define
                 if self.is_already_defined(name) {
                     return Err(Error::RedefineLocalVar(name.to_owned()));
@@ -144,17 +146,19 @@ impl Resolver {
 
                 ast::StmtKind::Return(return_expr)
             }
-            frontend_ast::StmtKind::ClassDecl(name, superclass, methods) => {
+            frontend_ast::StmtKind::ClassDecl(ident, superclass, methods) => {
+                let name = &ident.name;
+
                 // Define the class in the current scope
                 self.define(name);
 
                 // Resolve the superclass if it exists
                 let resolved_superclass = match superclass {
                     Some(superclass) => {
-                        if superclass == name {
+                        if superclass.name == *name {
                             return Err(Error::InheritFromSelf);
                         }
-                        Some(self.resolve_variable(superclass))
+                        Some(self.resolve_variable(&superclass.name))
                     }
                     None => None,
                 };
@@ -179,7 +183,7 @@ impl Resolver {
 
                 let mut resolved_methods = Vec::with_capacity(methods.len());
                 for method_data in methods.iter() {
-                    let function_ctx = if method_data.name == INIT_STR {
+                    let function_ctx = if method_data.ident.name == INIT_STR {
                         FunctionContext::Initializer
                     } else {
                         FunctionContext::Method
@@ -243,12 +247,12 @@ impl Resolver {
             }
             frontend_ast::ExprKind::Get(subexpr, property) => {
                 let subexpr = Box::new(self.resolve_expression(subexpr)?);
-                ast::ExprKind::Get(subexpr, property.clone())
+                ast::ExprKind::Get(subexpr, property.name.clone())
             }
             frontend_ast::ExprKind::Set(subexpr, property, value) => {
                 let subexpr = Box::new(self.resolve_expression(subexpr)?);
                 let value = Box::new(self.resolve_expression(value)?);
-                ast::ExprKind::Set(subexpr, property.clone(), value)
+                ast::ExprKind::Set(subexpr, property.name.clone(), value)
             }
             frontend_ast::ExprKind::This => {
                 if self.class_ctx == ClassContext::Global {
@@ -260,7 +264,7 @@ impl Resolver {
                 if self.class_ctx != ClassContext::Subclass {
                     return Err(Error::SuperOutsideSubclass);
                 }
-                ast::ExprKind::Super(self.resolve_variable(SUPER_STR), method_name.clone())
+                ast::ExprKind::Super(self.resolve_variable(SUPER_STR), method_name.name.clone())
             }
         };
 
@@ -275,8 +279,10 @@ impl Resolver {
         fn_data: &frontend_ast::FunctionDecl,
         ctx: FunctionContext,
     ) -> ResolveResult<ast::FunctionDecl> {
+        let fn_name = &fn_data.ident.name;
+
         // Define eagerly, so that the function can refer to itself recursively.
-        self.define(&fn_data.name);
+        self.define(&fn_name);
 
         // Push a new scope, save the previous function context, and apply
         // the new one.
@@ -285,8 +291,8 @@ impl Resolver {
         self.function_ctx = ctx;
 
         // Define parameters
-        for name in fn_data.params.iter() {
-            self.define(name);
+        for param in fn_data.params.iter() {
+            self.define(&param.name);
         }
 
         let resolved_body = fn_data
@@ -300,8 +306,12 @@ impl Resolver {
         self.pop_scope();
 
         Ok(ast::FunctionDecl {
-            name: fn_data.name.clone(),
-            params: fn_data.params.clone(),
+            name: fn_name.to_owned(),
+            params: fn_data
+                .params
+                .iter()
+                .map(|ident| ident.name.clone())
+                .collect(),
             body: resolved_body,
         })
     }

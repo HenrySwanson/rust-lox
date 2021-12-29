@@ -501,69 +501,65 @@ impl<'src> Parser<'src> {
         Ok(mk_expr(expr_kind, lo.to(self.previous.span)))
     }
 
-    fn parse_identifier(&mut self) -> ParseResult<String> {
+    fn parse_identifier(&mut self) -> ParseResult<ast::Identifier> {
         self.bump()?;
         match &self.previous.token {
-            Token::Identifier(name) => Ok(name.to_owned()),
+            Token::Identifier(name) => {
+                Ok(ast::Identifier::new(name.to_owned(), self.previous.span))
+            }
             _ => Err(Error::ExpectedIdentifier(self.previous.span)),
         }
     }
 
-    fn parse_comma_sep<T, F>(&mut self, elt_parser: F) -> ParseResult<Vec<(T, Span)>>
+    fn parse_comma_sep<T, F>(&mut self, elt_parser: F) -> ParseResult<Vec<T>>
     where
         F: Fn(&mut Parser<'src>) -> ParseResult<T>,
     {
         self.eat(Token::LeftParen)?;
-        let mut args = vec![];
+        let mut elements = vec![];
 
         // Check for the zero-argument case
         if self.try_eat(Token::RightParen) {
-            return Ok(args);
+            return Ok(elements);
         }
 
         // There must be at least one argument
-        let lo = self.current.span;
-        let elt = elt_parser(self)?;
-        let hi = self.previous.span;
-        args.push((elt, lo.to(hi)));
+        elements.push(elt_parser(self)?);
 
         while !self.try_eat(Token::RightParen) {
             self.eat(Token::Comma)
                 .map_err(|_| Error::ExpectCommaBetween(self.previous.span))?;
 
-            let lo = self.current.span;
-            let elt = elt_parser(self)?;
-            let hi = self.previous.span;
-            args.push((elt, lo.to(hi)));
+            elements.push(elt_parser(self)?);
         }
 
-        Ok(args)
+        Ok(elements)
     }
 
     fn parse_fn_args(&mut self) -> ParseResult<Vec<ast::Expr>> {
         let args = self.parse_comma_sep(Self::parse_expression)?;
         if let Some(extra_args) = args.get(MAX_NUMBER_ARGS..) {
-            for (_, span) in extra_args.iter() {
-                self.emit_error(Error::TooManyArgs(*span));
+            for arg in extra_args.iter() {
+                self.emit_error(Error::TooManyArgs(arg.span));
             }
         }
 
         // We've already recorded the errors, so it's fine to return this even if it's
         // slightly out of spec.
-        Ok(args.into_iter().map(|(arg, span)| arg).collect())
+        Ok(args)
     }
 
-    fn parse_fn_params(&mut self) -> ParseResult<Vec<String>> {
+    fn parse_fn_params(&mut self) -> ParseResult<Vec<ast::Identifier>> {
         let params = self.parse_comma_sep(Self::parse_identifier)?;
         if let Some(extra_params) = params.get(MAX_NUMBER_ARGS..) {
-            for (_, span) in extra_params.iter() {
-                self.emit_error(Error::TooManyParams(*span));
+            for ident in extra_params.iter() {
+                self.emit_error(Error::TooManyParams(ident.span));
             }
         }
 
         // We've already recorded the errors, so it's fine to return this even if it's
         // slightly out of spec.
-        Ok(params.into_iter().map(|(param, span)| param).collect())
+        Ok(params)
     }
 }
 

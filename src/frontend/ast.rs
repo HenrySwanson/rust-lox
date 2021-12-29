@@ -19,13 +19,13 @@ pub struct Stmt {
 pub enum StmtKind {
     Expression(Expr),
     Print(Expr),
-    VariableDecl(String, Expr),
+    VariableDecl(Identifier, Expr),
     Block(Vec<Stmt>),
     IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
     FunctionDecl(FunctionDecl),
     Return(Option<Expr>),
-    ClassDecl(String, Option<String>, Vec<FunctionDecl>),
+    ClassDecl(Identifier, Option<Identifier>, Vec<FunctionDecl>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -43,10 +43,16 @@ pub enum ExprKind {
     Variable(String),
     Assignment(String, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
-    Get(Box<Expr>, String),
-    Set(Box<Expr>, String, Box<Expr>),
+    Get(Box<Expr>, Identifier),
+    Set(Box<Expr>, Identifier, Box<Expr>),
     This,
-    Super(String),
+    Super(Identifier),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Identifier {
+    pub name: String,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -59,8 +65,8 @@ pub enum Literal {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDecl {
-    pub name: String,
-    pub params: Vec<String>,
+    pub ident: Identifier,
+    pub params: Vec<Identifier>,
     pub body: Vec<Stmt>,
 }
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -100,9 +106,7 @@ impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
         Expr { kind, span }
     }
-}
 
-impl Expr {
     /// Returns a pretty-formatted string to show the AST. Uses a Lisp-like format,
     /// with a lot of parentheses.
     #[allow(dead_code)]
@@ -135,22 +139,34 @@ impl Expr {
                 let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();
                 format!("(call {} {})", callee.lispy_string(), exprs.join(" "))
             }
-            ExprKind::Get(expr, property) => format!("(get {} {})", expr.lispy_string(), property),
+            ExprKind::Get(expr, property) => {
+                format!("(get {} {})", expr.lispy_string(), property.name)
+            }
             ExprKind::Set(expr, property, value) => format!(
                 "(set {} {} {})",
                 expr.lispy_string(),
-                property,
+                property.name,
                 value.lispy_string()
             ),
             ExprKind::This => String::from("this"),
-            ExprKind::Super(method_name) => format!("(super {})", method_name),
+            ExprKind::Super(method_name) => format!("(super {})", method_name.name),
         }
     }
 }
 
+impl Identifier {
+    pub fn new(name: String, span: Span) -> Self {
+        Self { name, span }
+    }
+}
+
 impl FunctionDecl {
-    pub fn new(name: String, params: Vec<String>, body: Vec<Stmt>) -> Self {
-        FunctionDecl { name, params, body }
+    pub fn new(ident: Identifier, params: Vec<Identifier>, body: Vec<Stmt>) -> Self {
+        FunctionDecl {
+            ident,
+            params,
+            body,
+        }
     }
 }
 
