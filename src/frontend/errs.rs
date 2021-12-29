@@ -17,6 +17,7 @@ pub enum Error {
     SemiAfterExpression(Span),
     ExpectSuperDot(Span),
     ExpectSuperMethod(Span),
+    ExpectSuperclassName(Span),
     ExpectPropertyName(Span),
 }
 
@@ -35,16 +36,10 @@ impl Error {
                 )
             }
             Error::ExpectedExprAt(span, _) => {
-                format!(
-                    "{}: Expect expression.",
-                    get_error_prefix(span, source),
-                )
+                format!("{}: Expect expression.", get_error_prefix(span, source),)
             }
             Error::ExpectedIdentifier(span) => {
-                format!(
-                    "{}: Expect variable name.",
-                    get_error_prefix(span, source),
-                )
+                format!("{}: Expect variable name.", get_error_prefix(span, source),)
             }
             Error::InvalidAssignment(span) => {
                 format!(
@@ -58,7 +53,7 @@ impl Error {
                     get_error_prefix(span, source),
                     MAX_NUMBER_ARGS,
                 )
-            },
+            }
             Error::TooManyParams(span) => {
                 format!(
                     "{}: Can't have more than {} parameters.",
@@ -83,6 +78,10 @@ impl Error {
             ),
             Error::ExpectSuperMethod(span) => format!(
                 "{}: Expect superclass method name.",
+                get_error_prefix(span, source),
+            ),
+            Error::ExpectSuperclassName(span) => format!(
+                "{}: Expect superclass name.",
                 get_error_prefix(span, source),
             ),
             Error::ExpectPropertyName(span) => format!(

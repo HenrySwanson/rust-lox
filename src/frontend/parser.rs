@@ -189,7 +189,10 @@ impl<'src> Parser<'src> {
         let name = self.parse_identifier()?;
 
         let superclass = if self.try_eat(Token::LeftAngle) {
-            Some(self.parse_identifier()?)
+            let superclass_name = self
+                .parse_identifier()
+                .map_err(|_| Error::ExpectSuperclassName(self.previous.span))?;
+            Some(superclass_name)
         } else {
             None
         };
