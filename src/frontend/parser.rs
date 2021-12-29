@@ -133,6 +133,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_spanned_declaration(&mut self) -> Option<ast::Stmt> {
+        // TODO: include Error as a possible node, instead of using None
         let lo = self.current.span;
         let decl = self.parse_declaration_nospan();
         let hi = self.previous.span;
@@ -152,19 +153,7 @@ impl<'src> Parser<'src> {
 
     fn parse_declaration_nospan(&mut self) -> ParseResult<ast::StmtKind> {
         match self.current.token {
-            Token::Var => {
-                self.bump()?;
-                let name = self.parse_identifier()?;
-                let expr = if self.try_eat(Token::Equals) {
-                    self.parse_expression()?
-                } else {
-                    mk_expr(from_lit(ast::Literal::Nil), Span::dummy())
-                };
-                self.eat(Token::Semicolon)
-                    .map_err(|_| Error::SemiAfterVar(self.previous.span))?;
-
-                Ok(ast::StmtKind::VariableDecl(name, expr))
-            }
+            Token::Var => self.parse_variable_decl(),
             Token::Fun => {
                 let fn_data = self.parse_function_data(true)?;
                 Ok(ast::StmtKind::FunctionDecl(fn_data))
@@ -172,6 +161,20 @@ impl<'src> Parser<'src> {
             Token::Class => self.parse_class_decl(),
             _ => self.parse_statement_nospan(),
         }
+    }
+
+    fn parse_variable_decl(&mut self) -> ParseResult<ast::StmtKind> {
+        self.eat(Token::Var)?;
+        let name = self.parse_identifier()?;
+        let expr = if self.try_eat(Token::Equals) {
+            self.parse_expression()?
+        } else {
+            mk_expr(from_lit(ast::Literal::Nil), Span::dummy())
+        };
+        self.eat(Token::Semicolon)
+            .map_err(|_| Error::SemiAfterVar(self.previous.span))?;
+
+        Ok(ast::StmtKind::VariableDecl(name, expr))
     }
 
     fn parse_function_data(&mut self, leading_fun: bool) -> ParseResult<ast::FunctionDecl> {
@@ -279,25 +282,23 @@ impl<'src> Parser<'src> {
 
     fn parse_for_statement(&mut self) -> ParseResult<ast::StmtKind> {
         // TODO: this one's very messy, can we make it less ridiculous?
-        let lo = self.current.span;
+        let whole_lo = self.current.span;
 
         self.eat(Token::For)?;
         self.eat(Token::LeftParen)?;
 
         // Figure out the three parts of the loop; each is optional
+        let init_lo = self.current.span;
         let initializer = if self.try_eat(Token::Semicolon) {
             None
         } else if self.check(Token::Var) {
-            self.parse_spanned_declaration()
+            Some(self.parse_variable_decl()?)
         } else {
-            let lo = self.current.span;
             let expr = self.parse_expression()?;
             self.eat(Token::Semicolon)?;
-            Some(mk_stmt(
-                ast::StmtKind::Expression(expr),
-                lo.to(self.previous.span),
-            ))
+            Some(ast::StmtKind::Expression(expr))
         };
+        let initializer = initializer.map(|s| mk_stmt(s, init_lo.to(self.previous.span)));
 
         let condition = if self.check(Token::Semicolon) {
             mk_expr(from_lit(ast::Literal::Boolean(true)), Span::dummy())
@@ -332,7 +333,7 @@ impl<'src> Parser<'src> {
         if let Some(initializer) = initializer {
             body = mk_stmt(
                 ast::StmtKind::Block(vec![initializer, body]),
-                lo.to(self.previous.span),
+                whole_lo.to(self.previous.span),
             );
         }
 
