@@ -358,7 +358,7 @@ impl<'src> Parser<'src> {
             self.eat(Token::RightBrace).unwrap();
             Ok(stmts)
         } else {
-            Err(Error::UnclosedDelimiterAtEof)
+            Err(Error::UnclosedBrace(self.current.span))
         }
     }
 
@@ -443,7 +443,9 @@ impl<'src> Parser<'src> {
                 }
                 InfixOperator::Property => {
                     // The RHS must be an identifier
-                    let rhs = self.parse_identifier()?;
+                    let rhs = self
+                        .parse_identifier()
+                        .map_err(|_| Error::ExpectPropertyName(self.previous.span))?;
                     ast::ExprKind::Get(Box::new(lhs), rhs)
                 }
             };

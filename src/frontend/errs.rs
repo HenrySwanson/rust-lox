@@ -11,11 +11,12 @@ pub enum Error {
     ExpectedIdentifier(Span),
     InvalidAssignment(Span),
     TooManyArgs(Span),
-    UnclosedDelimiterAtEof,
+    UnclosedBrace(Span),
     FunctionBodyStart(Span),
     SemiAfterExpression(Span),
     ExpectSuperDot(Span),
     ExpectSuperMethod(Span),
+    ExpectPropertyName(Span),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -34,48 +35,63 @@ impl Error {
             }
             Error::ExpectedExprAt(span, _) => {
                 format!(
-                    "Error at '{}': Expect expression.",
-                    span.extract_string(&source).unwrap(),
+                    "{}: Expect expression.",
+                    get_error_prefix(span, source),
                 )
             }
             Error::ExpectedIdentifier(span) => {
                 format!(
-                    "Error at '{}': Expect variable name.",
-                    span.extract_string(source).unwrap()
+                    "{}: Expect variable name.",
+                    get_error_prefix(span, source),
                 )
             }
             Error::InvalidAssignment(span) => {
                 format!(
-                    "Error at '{}': Invalid assignment target.",
-                    span.extract_string(source).unwrap()
+                    "{}: Invalid assignment target.",
+                    get_error_prefix(span, source),
                 )
             }
             Error::TooManyArgs(span) => {
                 format!(
-                    "Error at '{}': Can't have more than {} parameters",
-                    span.extract_string(source).unwrap(),
+                    "{}: Can't have more than {} parameters",
+                    get_error_prefix(span, source),
                     MAX_NUMBER_ARGS,
                 )
             }
-            Error::UnclosedDelimiterAtEof => {
-                format!("Error at end: Expected }}")
+            Error::UnclosedBrace(span) => {
+                format!("{}: Expected }}", get_error_prefix(span, source))
             }
             Error::FunctionBodyStart(span) => format!(
-                "Error at '{}': Expect '{{' before function body.",
-                span.extract_string(source).unwrap(),
+                "{}: Expect '{{' before function body.",
+                get_error_prefix(span, source),
             ),
             Error::SemiAfterExpression(span) => format!(
-                "Error at '{}': Expect ';' after expression.",
-                span.extract_string(source).unwrap(),
+                "{}: Expect ';' after expression.",
+                get_error_prefix(span, source),
             ),
             Error::ExpectSuperDot(span) => format!(
-                "Error at '{}': Expect '.' after 'super'.",
-                span.extract_string(source).unwrap(),
+                "{}: Expect '.' after 'super'.",
+                get_error_prefix(span, source),
             ),
             Error::ExpectSuperMethod(span) => format!(
-                "Error at '{}': Expect superclass method name.",
-                span.extract_string(source).unwrap(),
-            )
+                "{}: Expect superclass method name.",
+                get_error_prefix(span, source),
+            ),
+            Error::ExpectPropertyName(span) => format!(
+                "{}: Expect property name after '.'.",
+                get_error_prefix(span, source),
+            ),
         }
+    }
+}
+
+fn get_error_prefix(span: &Span, source: &str) -> String {
+    // We include a hack to get EOF spans to say 'at end'. Probably should
+    // live in Span itself, but refactoring is easier once all tests pass,
+    // y'know?
+    if span.lo.byte_pos < source.len() {
+        format!("Error at '{}'", span.extract_string(source).unwrap())
+    } else {
+        String::from("Error at end")
     }
 }
