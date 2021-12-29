@@ -500,7 +500,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_comma_sep<T, F>(&mut self, elt_parser: F, max_elements: usize) -> ParseResult<Vec<T>>
+    fn parse_comma_sep<T, F>(&mut self, elt_parser: F) -> ParseResult<Vec<(T, Span)>>
     where
         F: Fn(&mut Parser<'src>) -> ParseResult<T>,
     {
@@ -513,27 +513,47 @@ impl<'src> Parser<'src> {
         }
 
         // There must be at least one argument
-        args.push(elt_parser(self)?);
+        let lo = self.current.span;
+        let elt = elt_parser(self)?;
+        let hi = self.previous.span;
+        args.push((elt, lo.to(hi)));
 
         while !self.try_eat(Token::RightParen) {
             self.eat(Token::Comma)?;
-            args.push(elt_parser(self)?);
 
-            // lox has a maximum number of arguments it supports
-            if args.len() >= max_elements {
-                return Err(Error::TooManyArgs(self.current.span));
-            }
+            let lo = self.current.span;
+            let elt = elt_parser(self)?;
+            let hi = self.previous.span;
+            args.push((elt, lo.to(hi)));
         }
 
         Ok(args)
     }
 
     fn parse_fn_args(&mut self) -> ParseResult<Vec<ast::Expr>> {
-        self.parse_comma_sep(Self::parse_expression, MAX_NUMBER_ARGS)
+        let args = self.parse_comma_sep(Self::parse_expression)?;
+        if let Some(extra_args) = args.get(MAX_NUMBER_ARGS..) {
+            for (_, span) in extra_args.iter() {
+                self.emit_error(Error::TooManyArgs(*span));
+            }
+        }
+
+        // We've already recorded the errors, so it's fine to return this even if it's
+        // slightly out of spec.
+        Ok(args.into_iter().map(|(arg, span)| arg).collect())
     }
 
     fn parse_fn_params(&mut self) -> ParseResult<Vec<String>> {
-        self.parse_comma_sep(Self::parse_identifier, MAX_NUMBER_ARGS)
+        let params = self.parse_comma_sep(Self::parse_identifier)?;
+        if let Some(extra_params) = params.get(MAX_NUMBER_ARGS..) {
+            for (_, span) in extra_params.iter() {
+                self.emit_error(Error::TooManyParams(*span));
+            }
+        }
+
+        // We've already recorded the errors, so it's fine to return this even if it's
+        // slightly out of spec.
+        Ok(params.into_iter().map(|(param, span)| param).collect())
     }
 }
 

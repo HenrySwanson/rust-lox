@@ -1,7 +1,7 @@
 use super::span::Span;
 use super::token::Token;
 
-pub const MAX_NUMBER_ARGS: usize = 256;
+pub const MAX_NUMBER_ARGS: usize = 255;
 
 #[derive(Debug)]
 pub enum Error {
@@ -11,6 +11,7 @@ pub enum Error {
     ExpectedIdentifier(Span),
     InvalidAssignment(Span),
     TooManyArgs(Span),
+    TooManyParams(Span),
     UnclosedBrace(Span),
     FunctionBodyStart(Span),
     SemiAfterExpression(Span),
@@ -53,7 +54,14 @@ impl Error {
             }
             Error::TooManyArgs(span) => {
                 format!(
-                    "{}: Can't have more than {} parameters",
+                    "{}: Can't have more than {} arguments.",
+                    get_error_prefix(span, source),
+                    MAX_NUMBER_ARGS,
+                )
+            },
+            Error::TooManyParams(span) => {
+                format!(
+                    "{}: Can't have more than {} parameters.",
                     get_error_prefix(span, source),
                     MAX_NUMBER_ARGS,
                 )
