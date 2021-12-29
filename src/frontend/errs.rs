@@ -5,7 +5,7 @@ pub const MAX_NUMBER_ARGS: usize = 255;
 
 #[derive(Debug)]
 pub enum Error {
-    IllegalToken(Span, String),
+    InvalidToken(Span, String),
     ExpectedTokenAt(Token, Span, Token),
     ExpectedExprAt(Span, Token),
     ExpectedIdentifier(Span),
@@ -27,8 +27,8 @@ pub type ParseResult<T> = Result<T, Error>;
 impl Error {
     pub fn render(&self, source: &str) -> String {
         match self {
-            Error::IllegalToken(span, string) => {
-                format!("Illegal token {} on line {}", string, span.lo.line_no)
+            Error::InvalidToken(_span, msg) => {
+                format!("Error: {}.", msg)
             }
             Error::ExpectedTokenAt(expected, span, got) => {
                 format!(

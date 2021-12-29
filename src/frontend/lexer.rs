@@ -91,7 +91,7 @@ impl<'src> Lexer<'src> {
             _ if is_digit_char(ch) => self.lex_number(byte_idx),
             // This branch would match a digit, but we match digits earlier so it's okay
             _ if is_identifier_char(ch) => self.lex_identifier_or_kw(byte_idx),
-            _ => Token::Error(format!("Unrecognized token `{}`", ch)),
+            _ => Token::Error(format!("Unexpected character '{}'", ch)),
         };
 
         Some(token)

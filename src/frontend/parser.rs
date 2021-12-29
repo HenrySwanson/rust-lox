@@ -22,19 +22,13 @@ impl<'src> Parser<'src> {
             span: Span::dummy(),
         };
 
-        let mut parser = Parser {
+        Parser {
             source,
             lexer: Lexer::new(source),
             current: fake_token.clone(),
             previous: fake_token,
             errors: vec![],
-        };
-
-        // "Prime the pump" and return
-        // If we get an error token, that's okay, we'll pick it up with
-        // `check` and `try_eat`.
-        std::mem::drop(parser.bump());
-        parser
+        }
     }
 
     // ---- Simple token-based operations ----
@@ -46,7 +40,7 @@ impl<'src> Parser<'src> {
         self.current = self.lexer.next_token();
 
         if let Token::Error(e) = &self.current.token {
-            Err(Error::IllegalToken(self.current.span, e.clone()))
+            Err(Error::InvalidToken(self.current.span, e.clone()))
         } else {
             Ok(())
         }
@@ -89,6 +83,16 @@ impl<'src> Parser<'src> {
 
     pub fn parse_all(mut self) -> Result<ast::Tree, Vec<Error>> {
         // TODO: the changes in synchronize affect this code. re-think it
+
+        // "Prime the pump", so that self.current points at a real token.
+        // Unfortunately self.previous will still point at the fake token
+        // generated in the constructor, but that's fine, I think.
+        // It depends on if we do lookbehind at the beginning
+        // of a parse. Which we don't, but it's not enforced.)
+        if let Err(e) = self.bump() {
+            self.emit_error(e);
+            self.synchronize();
+        };
 
         let mut stmts = vec![];
 
@@ -581,11 +585,12 @@ mod tests {
     fn expression_parsing() {
         fn parse_expression(source: &str) -> ast::Expr {
             let mut parser = Parser::new(source);
+            parser.bump().unwrap();
             parser.parse_expression().unwrap()
         }
 
         assert_eq!(parse_expression("3+4").lispy_string(), "(+ 3 4)");
-
+        
         assert_eq!(
             parse_expression("3 + 1 * 5 - 4").lispy_string(),
             "(- (+ 3 (* 1 5)) 4)"
