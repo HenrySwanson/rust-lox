@@ -12,6 +12,7 @@ pub enum Error {
     InvalidAssignment(Span),
     TooManyArgs(Span),
     UnclosedDelimiterAtEof,
+    FunctionBodyStart(Span),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -56,6 +57,10 @@ impl Error {
             Error::UnclosedDelimiterAtEof => {
                 format!("Error at end: Expected }}")
             }
+            Error::FunctionBodyStart(span) => format!(
+                "Error at '{}': Expect '{{' before function body.",
+                span.extract_string(source).unwrap(),
+            ),
         }
     }
 }

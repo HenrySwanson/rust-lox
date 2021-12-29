@@ -171,7 +171,9 @@ impl<'src> Parser<'src> {
         let name = self.parse_identifier()?;
         let params = self.parse_fn_params()?;
 
-        let stmts = self.parse_braced_statement_list()?;
+        self.eat(Token::LeftBrace)
+            .map_err(|_| Error::FunctionBodyStart(self.previous.span))?;
+        let stmts = self.parse_braced_statement_tail()?;
 
         let fn_data = ast::FunctionDecl::new(name, params, stmts);
         Ok(fn_data)
@@ -222,7 +224,8 @@ impl<'src> Parser<'src> {
             Token::For => self.parse_for_statement(),
             Token::Return => self.parse_return_statement(),
             Token::LeftBrace => {
-                let stmts = self.parse_braced_statement_list()?;
+                self.bump()?;
+                let stmts = self.parse_braced_statement_tail()?;
                 Ok(ast::StmtKind::Block(stmts))
             }
             _ => {
@@ -335,10 +338,9 @@ impl<'src> Parser<'src> {
         Ok(ast::StmtKind::Return(expr))
     }
 
-    fn parse_braced_statement_list(&mut self) -> ParseResult<Vec<ast::Stmt>> {
+    fn parse_braced_statement_tail(&mut self) -> ParseResult<Vec<ast::Stmt>> {
         let mut stmts = vec![];
 
-        self.eat(Token::LeftBrace)?;
         while !self.check(Token::RightBrace) && !self.check(Token::EndOfFile) {
             if let Some(stmt) = self.parse_spanned_declaration() {
                 stmts.push(stmt);
