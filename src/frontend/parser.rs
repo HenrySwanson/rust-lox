@@ -160,7 +160,8 @@ impl<'src> Parser<'src> {
                 } else {
                     mk_expr(from_lit(ast::Literal::Nil), Span::dummy())
                 };
-                self.eat(Token::Semicolon)?;
+                self.eat(Token::Semicolon)
+                    .map_err(|_| Error::SemiAfterVar(self.previous.span))?;
 
                 Ok(ast::StmtKind::VariableDecl(name, expr))
             }
@@ -590,7 +591,7 @@ mod tests {
         }
 
         assert_eq!(parse_expression("3+4").lispy_string(), "(+ 3 4)");
-        
+
         assert_eq!(
             parse_expression("3 + 1 * 5 - 4").lispy_string(),
             "(- (+ 3 (* 1 5)) 4)"

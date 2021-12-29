@@ -16,6 +16,7 @@ pub enum Error {
     FunctionBodyStart(Span),
     ExpectCommaBetween(Span),
     SemiAfterExpression(Span),
+    SemiAfterVar(Span),
     ExpectSuperDot(Span),
     ExpectSuperMethod(Span),
     ExpectSuperclassName(Span),
@@ -92,6 +93,10 @@ impl Error {
             Error::ExpectCommaBetween(span) => format!(
                 "{}: Expect ',' between elements.",
                 get_error_prefix(span, source),
+            ),
+            Error::SemiAfterVar(span) => format!(
+                "{}: Expect ';' after variable declaration.",
+                get_error_prefix(span, source)
             ),
         }
     }
