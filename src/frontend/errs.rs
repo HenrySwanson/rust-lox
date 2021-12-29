@@ -14,6 +14,8 @@ pub enum Error {
     UnclosedDelimiterAtEof,
     FunctionBodyStart(Span),
     SemiAfterExpression(Span),
+    ExpectSuperDot(Span),
+    ExpectSuperMethod(Span),
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -66,6 +68,14 @@ impl Error {
                 "Error at '{}': Expect ';' after expression.",
                 span.extract_string(source).unwrap(),
             ),
+            Error::ExpectSuperDot(span) => format!(
+                "Error at '{}': Expect '.' after 'super'.",
+                span.extract_string(source).unwrap(),
+            ),
+            Error::ExpectSuperMethod(span) => format!(
+                "Error at '{}': Expect superclass method name.",
+                span.extract_string(source).unwrap(),
+            )
         }
     }
 }

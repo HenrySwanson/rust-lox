@@ -107,7 +107,10 @@ impl<'src> Parser<'src> {
 
     fn synchronize(&mut self) {
         // Consume until we see a semicolon or EOF
-        let mut synchronization_point = false;
+
+        // Special case: if the erroneous token we consumed is a semicolon,
+        // we're already synced.
+        let mut synchronization_point = self.previous.token == Token::Semicolon;
 
         while !synchronization_point {
             let current_token = &self.current.token;
@@ -469,8 +472,11 @@ impl<'src> Parser<'src> {
             Token::Identifier(name) => ast::ExprKind::Variable(name.to_owned()),
             Token::This => ast::ExprKind::This,
             Token::Super => {
-                self.eat(Token::Dot)?;
-                let method_name = self.parse_identifier()?;
+                self.eat(Token::Dot)
+                    .map_err(|_| Error::ExpectSuperDot(self.previous.span))?;
+                let method_name = self
+                    .parse_identifier()
+                    .map_err(|_| Error::ExpectSuperMethod(self.previous.span))?;
                 ast::ExprKind::Super(method_name)
             }
             // Parentheses
