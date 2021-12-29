@@ -14,6 +14,7 @@ pub enum Error {
     TooManyParams(Span),
     UnclosedBrace(Span),
     FunctionBodyStart(Span),
+    ExpectCommaBetween(Span),
     SemiAfterExpression(Span),
     ExpectSuperDot(Span),
     ExpectSuperMethod(Span),
@@ -86,6 +87,10 @@ impl Error {
             ),
             Error::ExpectPropertyName(span) => format!(
                 "{}: Expect property name after '.'.",
+                get_error_prefix(span, source),
+            ),
+            Error::ExpectCommaBetween(span) => format!(
+                "{}: Expect ',' between elements.",
                 get_error_prefix(span, source),
             ),
         }

@@ -522,7 +522,8 @@ impl<'src> Parser<'src> {
         args.push((elt, lo.to(hi)));
 
         while !self.try_eat(Token::RightParen) {
-            self.eat(Token::Comma)?;
+            self.eat(Token::Comma)
+                .map_err(|_| Error::ExpectCommaBetween(self.previous.span))?;
 
             let lo = self.current.span;
             let elt = elt_parser(self)?;
