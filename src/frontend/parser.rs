@@ -79,6 +79,11 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn expect(&mut self, expected: Token) {
+        assert_eq!(self.current.token, expected);
+        std::mem::drop(self.bump());
+    }
+
     // ---- parsing methods ----
 
     pub fn parse_all(mut self) -> Result<ast::Tree, Vec<Error>> {
@@ -155,7 +160,9 @@ impl<'src> Parser<'src> {
         match self.current.token {
             Token::Var => self.parse_variable_decl(),
             Token::Fun => {
-                let fn_data = self.parse_function_data(true)?;
+                // parse_function_data doesn't expect the `fun`, b/c of methods
+                self.bump()?;
+                let fn_data = self.parse_function_data()?;
                 Ok(ast::StmtKind::FunctionDecl(fn_data))
             }
             Token::Class => self.parse_class_decl(),
@@ -164,7 +171,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_variable_decl(&mut self) -> ParseResult<ast::StmtKind> {
-        self.eat(Token::Var)?;
+        self.expect(Token::Var);
         let name = self.parse_identifier()?;
         let expr = if self.try_eat(Token::Equals) {
             self.parse_expression()?
@@ -177,10 +184,7 @@ impl<'src> Parser<'src> {
         Ok(ast::StmtKind::VariableDecl(name, expr))
     }
 
-    fn parse_function_data(&mut self, leading_fun: bool) -> ParseResult<ast::FunctionDecl> {
-        if leading_fun {
-            self.eat(Token::Fun)?;
-        }
+    fn parse_function_data(&mut self) -> ParseResult<ast::FunctionDecl> {
         let name = self.parse_identifier()?;
         let params = self.parse_fn_params()?;
 
@@ -193,7 +197,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_class_decl(&mut self) -> ParseResult<ast::StmtKind> {
-        self.eat(Token::Class)?;
+        self.expect(Token::Class);
         let name = self.parse_identifier()?;
 
         let superclass = if self.try_eat(Token::LeftAngle) {
@@ -209,7 +213,7 @@ impl<'src> Parser<'src> {
 
         let mut methods = vec![];
         while !self.try_eat(Token::RightBrace) {
-            let method_data = self.parse_function_data(false)?;
+            let method_data = self.parse_function_data()?;
             methods.push(method_data);
         }
 
@@ -254,7 +258,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_if_else_statement(&mut self) -> ParseResult<ast::StmtKind> {
-        self.eat(Token::If)?;
+        self.expect(Token::If);
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
         self.eat(Token::RightParen)?;
@@ -270,7 +274,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_while_statement(&mut self) -> ParseResult<ast::StmtKind> {
-        self.eat(Token::While)?;
+        self.expect(Token::While);
         self.eat(Token::LeftParen)?;
         let condition = self.parse_expression()?;
         self.eat(Token::RightParen)?;
@@ -281,10 +285,10 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_for_statement(&mut self) -> ParseResult<ast::StmtKind> {
+        self.expect(Token::For);
         // TODO: this one's very messy, can we make it less ridiculous?
         let whole_lo = self.current.span;
 
-        self.eat(Token::For)?;
         self.eat(Token::LeftParen)?;
 
         // Figure out the three parts of the loop; each is optional
@@ -342,7 +346,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_return_statement(&mut self) -> ParseResult<ast::StmtKind> {
-        self.eat(Token::Return)?;
+        self.expect(Token::Return);
         let expr = if !self.check(Token::Semicolon) {
             Some(self.parse_expression()?)
         } else {
