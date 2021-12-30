@@ -23,6 +23,7 @@ pub enum StmtKind {
     Block(Vec<Stmt>),
     IfElse(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
+    For(Option<Box<Stmt>>, Option<Box<Expr>>, Option<Box<Expr>>, Box<Stmt>),
     FunctionDecl(FunctionDecl),
     Return(Option<Expr>),
     ClassDecl(Identifier, Option<Identifier>, Vec<FunctionDecl>),

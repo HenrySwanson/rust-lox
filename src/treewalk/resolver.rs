@@ -113,6 +113,62 @@ impl Resolver {
                 let body = Box::new(self.resolve_statement(body)?);
                 ast::StmtKind::While(cond, body)
             }
+            frontend_ast::StmtKind::For(init, cond, incr, body) => {
+                // We resolve this into a while loop of the form:
+                // { init; while (cond) { { body; } incr; } }
+                let wrap_in_block = |stmt: frontend_ast::Stmt| {
+                    let span = stmt.span;
+                    frontend_ast::Stmt {
+                        kind: frontend_ast::StmtKind::Block(vec![stmt]),
+                        span,
+                    }
+                };
+
+                let wrap_in_block_2 = |stmt1: frontend_ast::Stmt, stmt2: frontend_ast::Stmt| {
+                    let span = stmt1.span.to(stmt2.span);
+                    frontend_ast::Stmt {
+                        kind: frontend_ast::StmtKind::Block(vec![stmt1, stmt2]),
+                        span,
+                    }
+                };
+
+                let expr_to_stmt = |expr: frontend_ast::Expr| {
+                    let span = expr.span;
+                    frontend_ast::Stmt {
+                        kind: frontend_ast::StmtKind::Expression(expr),
+                        span,
+                    }
+                };
+
+                let default_true = || frontend_ast::Expr {
+                    kind: frontend_ast::ExprKind::Literal(frontend_ast::Literal::Boolean(true)),
+                    span: Span::dummy(),
+                };
+
+                let mut rearranged = wrap_in_block(*body.clone());
+
+                // Attach incr
+                if let Some(incr) = incr {
+                    rearranged = wrap_in_block_2(rearranged, expr_to_stmt(*incr.clone()));
+                }
+
+                // Attach cond
+                let (cond, total_span) = match cond {
+                    Some(expr) => (*expr.clone(), expr.span.to(rearranged.span)),
+                    None => (default_true(), rearranged.span),
+                };
+                rearranged = frontend_ast::Stmt {
+                    kind: frontend_ast::StmtKind::While(cond, Box::new(rearranged)),
+                    span: total_span,
+                };
+
+                // Attach init
+                if let Some(init) = init {
+                    rearranged = wrap_in_block_2(*init.clone(), rearranged);
+                }
+
+                self.resolve_statement(&rearranged)?.kind
+            }
             frontend_ast::StmtKind::FunctionDecl(fn_data) => {
                 let fn_data = self.resolve_function(fn_data, FunctionContext::Function)?;
                 ast::StmtKind::FunctionDecl(fn_data)

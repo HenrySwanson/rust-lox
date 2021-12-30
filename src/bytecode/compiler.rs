@@ -201,6 +201,14 @@ impl<'strtable> Compiler<'strtable> {
             ast::StmtKind::While(condition, body) => {
                 self.compile_while_statement(condition, body.as_ref())?;
             }
+            ast::StmtKind::For(initializer, condition, increment, body) => {
+                self.compile_for_statement(
+                    initializer.as_deref(),
+                    condition.as_deref(),
+                    increment.as_deref(),
+                    body.as_ref(),
+                )?;
+            }
             ast::StmtKind::FunctionDecl(fn_decl) => {
                 // Functions are allowed to refer to themselves; create a local with the
                 // appropriate name before actually compiling the function.
@@ -322,6 +330,59 @@ impl<'strtable> Compiler<'strtable> {
 
         self.patch_jump(exit_jump)?;
         self.emit_op(RichOpcode::Pop, line_no);
+
+        Ok(())
+    }
+
+    fn compile_for_statement(
+        &mut self,
+        initializer: Option<&ast::Stmt>,
+        condition: Option<&ast::Expr>,
+        increment: Option<&ast::Expr>,
+        body: &ast::Stmt,
+    ) -> CompilerResult<()> {
+        self.begin_scope();
+
+        // First compile the initializer, if present
+        if let Some(initializer) = initializer {
+            self.compile_statement(initializer)?;
+        }
+
+        // Then compile the while loop
+        let loop_start = self.current_chunk().len();
+        let exit_jump = match condition {
+            Some(condition) => {
+                let line_no = condition.span.lo.line_no;
+                self.compile_expression(condition)?;
+                let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
+                self.emit_op(RichOpcode::Pop, line_no);
+                Some(exit_jump)
+            }
+            None => None,
+        };
+
+        // Then we compile the body
+        self.begin_scope();
+        self.compile_statement(body)?;
+        self.end_scope();
+
+        // Compile the increment
+        if let Some(increment) = increment {
+            self.compile_expression(increment)?;
+            self.emit_op(RichOpcode::Pop, increment.span.lo.line_no);
+        }
+
+        // Lastly, compile the jump back to the start of the loop and patch the exit jump
+        let last_line_no = body.span.hi.line_no;
+        self.emit_loop(loop_start, last_line_no)?;
+        if let Some(exit_jump) = exit_jump {
+            self.patch_jump(exit_jump)?;
+        }
+        self.emit_op(RichOpcode::Pop, last_line_no);
+
+        // This closes the scope that started the initializer. We can only close
+        // this scope once all the loop is resolved, because this emits instructions!
+        self.end_scope();
 
         Ok(())
     }

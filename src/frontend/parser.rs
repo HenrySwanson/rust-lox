@@ -1,5 +1,3 @@
-use std::string::ParseError;
-
 use super::ast;
 use super::errs::{Error, Item, ParseResult, MAX_NUMBER_ARGS};
 use super::lexer::Lexer;
@@ -298,29 +296,33 @@ impl<'src> Parser<'src> {
 
     fn parse_for_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.expect(Token::For);
-        // TODO: this one's very messy, can we make it less ridiculous?
-        let whole_lo = self.current.span;
 
         self.eat(Token::LeftParen, |token| {
             Error::ExpectAfter(token.span, "(", Item::For)
         })?;
 
         // Figure out the three parts of the loop; each is optional
-        let init_lo = self.current.span;
         let initializer = if self.try_eat(Token::Semicolon) {
             None
         } else if self.check(Token::Var) {
-            Some(self.parse_variable_decl()?)
+            let lo = self.current.span;
+            let stmt = mk_stmt(self.parse_variable_decl()?, lo.to(self.previous.span));
+            Some(Box::new(stmt))
         } else {
-            Some(self.parse_expression_statement()?)
+            let lo = self.current.span;
+            let stmt = mk_stmt(
+                self.parse_expression_statement()?,
+                lo.to(self.previous.span),
+            );
+            Some(Box::new(stmt))
         };
-        let initializer = initializer.map(|s| mk_stmt(s, init_lo.to(self.previous.span)));
 
         let condition = if self.check(Token::Semicolon) {
-            mk_expr(from_lit(ast::Literal::Boolean(true)), Span::dummy())
+            None
         } else {
-            self.parse_expression()?
+            Some(Box::new(self.parse_expression()?))
         };
+
         self.eat(Token::Semicolon, |token| {
             Error::ExpectAfter(token.span, ";", Item::Condition)
         })?;
@@ -328,37 +330,16 @@ impl<'src> Parser<'src> {
         let increment = if self.check(Token::RightParen) {
             None
         } else {
-            Some(self.parse_expression()?)
+            Some(Box::new(self.parse_expression()?))
         };
+
         self.eat(Token::RightParen, |token| {
             Error::ExpectAfter(token.span, ")", Item::ForClause)
         })?;
 
-        // Now we read the body, and modify it so that it has the semantics of
-        // the for-loop.
-        let mut body = self.parse_statement()?;
+        let body = Box::new(self.parse_statement()?);
 
-        // Should I use dummy spans here, or try to build reasonable approximations?
-        if let Some(increment) = increment {
-            let increment_stmt = mk_stmt(ast::StmtKind::Expression(increment), Span::dummy());
-            body = mk_stmt(
-                ast::StmtKind::Block(vec![body, increment_stmt]),
-                Span::dummy(),
-            );
-        }
-        body = mk_stmt(
-            ast::StmtKind::While(condition, Box::new(body)),
-            Span::dummy(),
-        );
-        if let Some(initializer) = initializer {
-            body = mk_stmt(
-                ast::StmtKind::Block(vec![initializer, body]),
-                whole_lo.to(self.previous.span),
-            );
-        }
-
-        // TODO lol this is dumb
-        Ok(body.kind)
+        Ok(ast::StmtKind::For(initializer, condition, increment, body))
     }
 
     fn parse_return_statement(&mut self) -> ParseResult<ast::StmtKind> {
