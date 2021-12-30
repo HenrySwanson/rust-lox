@@ -13,14 +13,20 @@ pub enum Error {
     TooManyArgs(Span),
     TooManyParams(Span),
     UnclosedBrace(Span),
-    FunctionBodyStart(Span),
     ExpectCommaBetween(Span),
-    SemiAfterExpression(Span),
-    SemiAfterVar(Span),
     ExpectSuperDot(Span),
     ExpectSuperMethod(Span),
     ExpectSuperclassName(Span),
     ExpectPropertyName(Span),
+    ExpectBefore(Span, &'static str, Item),
+    ExpectAfter(Span, &'static str, Item),
+}
+
+#[derive(Debug)]
+pub enum Item {
+    VariableDecl,
+    FunctionBody,
+    Expression,
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -66,14 +72,6 @@ impl Error {
             Error::UnclosedBrace(span) => {
                 format!("{}: Expected }}", get_error_prefix(span, source))
             }
-            Error::FunctionBodyStart(span) => format!(
-                "{}: Expect '{{' before function body.",
-                get_error_prefix(span, source),
-            ),
-            Error::SemiAfterExpression(span) => format!(
-                "{}: Expect ';' after expression.",
-                get_error_prefix(span, source),
-            ),
             Error::ExpectSuperDot(span) => format!(
                 "{}: Expect '.' after 'super'.",
                 get_error_prefix(span, source),
@@ -94,10 +92,28 @@ impl Error {
                 "{}: Expect ',' between elements.",
                 get_error_prefix(span, source),
             ),
-            Error::SemiAfterVar(span) => format!(
-                "{}: Expect ';' after variable declaration.",
-                get_error_prefix(span, source)
+            Error::ExpectBefore(span, expected, previous) => format!(
+                "{}: Expect '{}' before {}.",
+                get_error_prefix(span, source),
+                expected,
+                previous.as_str(),
             ),
+            Error::ExpectAfter(span, expected, previous) => format!(
+                "{}: Expect '{}' after {}.",
+                get_error_prefix(span, source),
+                expected,
+                previous.as_str(),
+            ),
+        }
+    }
+}
+
+impl Item {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Item::VariableDecl => "variable declaration",
+            Item::FunctionBody => "function body",
+            Item::Expression => "expression",
         }
     }
 }

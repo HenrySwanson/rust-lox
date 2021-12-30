@@ -1,5 +1,5 @@
 use super::ast;
-use super::errs::{Error, ParseResult, MAX_NUMBER_ARGS};
+use super::errs::{Error, Item, ParseResult, MAX_NUMBER_ARGS};
 use super::lexer::Lexer;
 use super::precedence::{InfixOperator, Precedence};
 use super::span::Span;
@@ -179,7 +179,7 @@ impl<'src> Parser<'src> {
             mk_expr(from_lit(ast::Literal::Nil), Span::dummy())
         };
         self.eat(Token::Semicolon)
-            .map_err(|_| Error::SemiAfterVar(self.previous.span))?;
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::VariableDecl))?;
 
         Ok(ast::StmtKind::VariableDecl(name, expr))
     }
@@ -189,7 +189,7 @@ impl<'src> Parser<'src> {
         let params = self.parse_fn_params()?;
 
         self.eat(Token::LeftBrace)
-            .map_err(|_| Error::FunctionBodyStart(self.previous.span))?;
+            .map_err(|_| Error::ExpectBefore(self.previous.span, "{", Item::FunctionBody))?;
         let stmts = self.parse_braced_statement_tail()?;
 
         let fn_data = ast::FunctionDecl::new(name, params, stmts);
@@ -251,7 +251,7 @@ impl<'src> Parser<'src> {
             _ => {
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon)
-                    .map_err(|_| Error::SemiAfterExpression(self.previous.span))?;
+                    .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::Expression))?;
                 Ok(ast::StmtKind::Expression(expr))
             }
         }
