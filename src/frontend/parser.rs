@@ -1,3 +1,5 @@
+use std::string::ParseError;
+
 use super::ast;
 use super::errs::{Error, Item, ParseResult, MAX_NUMBER_ARGS};
 use super::lexer::Lexer;
@@ -101,7 +103,7 @@ impl<'src> Parser<'src> {
         let mut stmts = vec![];
 
         while !self.check(Token::EndOfFile) {
-            if let Some(stmt) = self.parse_spanned_declaration() {
+            if let Some(stmt) = self.parse_declaration_with_recovery() {
                 stmts.push(stmt);
             }
         }
@@ -136,17 +138,9 @@ impl<'src> Parser<'src> {
         self.errors.push(err);
     }
 
-    fn parse_spanned_declaration(&mut self) -> Option<ast::Stmt> {
-        // TODO: include Error as a possible node, instead of using None
-        let lo = self.current.span;
-        let decl = self.parse_declaration_nospan();
-        let hi = self.previous.span;
-
-        match decl {
-            Ok(stmt) => Some(ast::Stmt {
-                kind: stmt,
-                span: lo.to(hi),
-            }),
+    fn parse_declaration_with_recovery(&mut self) -> Option<ast::Stmt> {
+        match self.parse_declaration() {
+            Ok(stmt) => Some(stmt),
             Err(err) => {
                 self.emit_error(err);
                 self.synchronize();
@@ -155,18 +149,25 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_declaration_nospan(&mut self) -> ParseResult<ast::StmtKind> {
-        match self.current.token {
-            Token::Var => self.parse_variable_decl(),
+    fn parse_declaration(&mut self) -> ParseResult<ast::Stmt> {
+        // TODO: include Error as a possible node, instead of using None
+        let lo = self.current.span;
+        let stmt_kind = match self.current.token {
+            Token::Var => self.parse_variable_decl()?,
             Token::Fun => {
                 // parse_function_data doesn't expect the `fun`, b/c of methods
                 self.bump()?;
                 let fn_data = self.parse_function_data()?;
-                Ok(ast::StmtKind::FunctionDecl(fn_data))
+                ast::StmtKind::FunctionDecl(fn_data)
             }
-            Token::Class => self.parse_class_decl(),
-            _ => self.parse_statement_nospan(),
-        }
+            Token::Class => self.parse_class_decl()?,
+            _ => return self.parse_statement(),
+        };
+
+        Ok(ast::Stmt {
+            kind: stmt_kind,
+            span: lo.to(self.previous.span),
+        })
     }
 
     fn parse_variable_decl(&mut self) -> ParseResult<ast::StmtKind> {
@@ -223,44 +224,41 @@ impl<'src> Parser<'src> {
         Ok(ast::StmtKind::ClassDecl(name, superclass, methods))
     }
 
-    fn parse_spanned_statement(&mut self) -> ParseResult<ast::Stmt> {
+    fn parse_statement(&mut self) -> ParseResult<ast::Stmt> {
         let lo = self.current.span;
-        let stmt = self.parse_statement_nospan()?;
-        let hi = self.previous.span;
-
-        Ok(ast::Stmt {
-            kind: stmt,
-            span: lo.to(hi),
-        })
-    }
-
-    fn parse_statement_nospan(&mut self) -> ParseResult<ast::StmtKind> {
-        match self.current.token {
+        let stmt_kind = match self.current.token {
             Token::Print => {
                 self.bump()?;
                 let expr = self.parse_expression()?;
                 self.eat(Token::Semicolon, |token| {
                     Error::ExpectAfter(token.span, ";", Item::PrintValue)
                 })?;
-                Ok(ast::StmtKind::Print(expr))
+                ast::StmtKind::Print(expr)
             }
-            Token::If => self.parse_if_else_statement(),
-            Token::While => self.parse_while_statement(),
-            Token::For => self.parse_for_statement(),
-            Token::Return => self.parse_return_statement(),
+            Token::If => self.parse_if_else_statement()?,
+            Token::While => self.parse_while_statement()?,
+            Token::For => self.parse_for_statement()?,
+            Token::Return => self.parse_return_statement()?,
             Token::LeftBrace => {
                 self.bump()?;
                 let stmts = self.parse_braced_statement_tail()?;
-                Ok(ast::StmtKind::Block(stmts))
+                ast::StmtKind::Block(stmts)
             }
-            _ => {
-                let expr = self.parse_expression()?;
-                self.eat(Token::Semicolon, |token| {
-                    Error::ExpectAfter(token.span, ";", Item::Expression)
-                })?;
-                Ok(ast::StmtKind::Expression(expr))
-            }
-        }
+            _ => self.parse_expression_statement()?,
+        };
+
+        Ok(ast::Stmt {
+            kind: stmt_kind,
+            span: lo.to(self.previous.span),
+        })
+    }
+
+    fn parse_expression_statement(&mut self) -> ParseResult<ast::StmtKind> {
+        let expr = self.parse_expression()?;
+        self.eat(Token::Semicolon, |token| {
+            Error::ExpectAfter(token.span, ";", Item::Expression)
+        })?;
+        Ok(ast::StmtKind::Expression(expr))
     }
 
     fn parse_if_else_statement(&mut self) -> ParseResult<ast::StmtKind> {
@@ -273,9 +271,9 @@ impl<'src> Parser<'src> {
             Error::ExpectAfter(token.span, ")", Item::Condition)
         })?;
 
-        let body = Box::new(self.parse_spanned_statement()?);
+        let body = Box::new(self.parse_statement()?);
         let else_body = if self.try_eat(Token::Else) {
-            Some(Box::new(self.parse_spanned_statement()?))
+            Some(Box::new(self.parse_statement()?))
         } else {
             None
         };
@@ -293,7 +291,7 @@ impl<'src> Parser<'src> {
             Error::ExpectAfter(token.span, ")", Item::Condition)
         })?;
 
-        let body = self.parse_spanned_statement()?;
+        let body = self.parse_statement()?;
 
         Ok(ast::StmtKind::While(condition, Box::new(body)))
     }
@@ -314,11 +312,7 @@ impl<'src> Parser<'src> {
         } else if self.check(Token::Var) {
             Some(self.parse_variable_decl()?)
         } else {
-            let expr = self.parse_expression()?;
-            self.eat(Token::Semicolon, |token| {
-                Error::ExpectAfter(token.span, ";", Item::Expression)
-            })?;
-            Some(ast::StmtKind::Expression(expr))
+            Some(self.parse_expression_statement()?)
         };
         let initializer = initializer.map(|s| mk_stmt(s, init_lo.to(self.previous.span)));
 
@@ -342,7 +336,7 @@ impl<'src> Parser<'src> {
 
         // Now we read the body, and modify it so that it has the semantics of
         // the for-loop.
-        let mut body = self.parse_spanned_statement()?;
+        let mut body = self.parse_statement()?;
 
         // Should I use dummy spans here, or try to build reasonable approximations?
         if let Some(increment) = increment {
@@ -385,7 +379,7 @@ impl<'src> Parser<'src> {
         let mut stmts = vec![];
 
         while !self.check(Token::RightBrace) && !self.check(Token::EndOfFile) {
-            if let Some(stmt) = self.parse_spanned_declaration() {
+            if let Some(stmt) = self.parse_declaration_with_recovery() {
                 stmts.push(stmt);
             }
         }
@@ -400,8 +394,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_expression(&mut self) -> ParseResult<ast::Expr> {
-        // We use pratt parsing to deal with expressions. Because of this,
-        // we don't have a parse_expression_nospan.
+        // We use pratt parsing to deal with expressions.
         self.pratt_parse(Precedence::Lowest)
     }
 
