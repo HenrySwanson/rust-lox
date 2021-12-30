@@ -6,7 +6,6 @@ pub const MAX_NUMBER_ARGS: usize = 255;
 #[derive(Debug)]
 pub enum Error {
     InvalidToken(Span, String),
-    ExpectedTokenAt(Token, Span, Token),
     ExpectedExprAt(Span, Token),
     ExpectedIdentifier(Span),
     InvalidAssignment(Span),
@@ -45,12 +44,6 @@ impl Error {
         match self {
             Error::InvalidToken(_span, msg) => {
                 format!("Error: {}.", msg)
-            }
-            Error::ExpectedTokenAt(expected, span, got) => {
-                format!(
-                    "Expected {:?} on line {}, got {:?}",
-                    expected, span.lo.line_no, got
-                )
             }
             Error::ExpectedExprAt(span, _) => {
                 format!("{}: Expect expression.", get_error_prefix(span, source),)
@@ -131,7 +124,7 @@ impl Item {
             Item::While => "'while'",
             Item::For => "'for'",
             Item::Condition => "condition",
-            Item::ForClause => "for clauses"
+            Item::ForClause => "for clauses",
         }
     }
 }
