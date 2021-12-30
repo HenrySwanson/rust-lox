@@ -209,7 +209,8 @@ impl<'src> Parser<'src> {
             None
         };
 
-        self.eat(Token::LeftBrace)?;
+        self.eat(Token::LeftBrace)
+            .map_err(|_| Error::ExpectBefore(self.previous.span, "{", Item::ClassBody))?;
 
         let mut methods = vec![];
         while !self.try_eat(Token::RightBrace) {
@@ -236,7 +237,8 @@ impl<'src> Parser<'src> {
             Token::Print => {
                 self.bump()?;
                 let expr = self.parse_expression()?;
-                self.eat(Token::Semicolon)?;
+                self.eat(Token::Semicolon)
+                    .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::PrintValue))?;
                 Ok(ast::StmtKind::Print(expr))
             }
             Token::If => self.parse_if_else_statement(),
@@ -259,9 +261,11 @@ impl<'src> Parser<'src> {
 
     fn parse_if_else_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.expect(Token::If);
-        self.eat(Token::LeftParen)?;
+        self.eat(Token::LeftParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, "(", Item::If))?;
         let condition = self.parse_expression()?;
-        self.eat(Token::RightParen)?;
+        self.eat(Token::RightParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ")", Item::Condition))?;
 
         let body = Box::new(self.parse_spanned_statement()?);
         let else_body = if self.try_eat(Token::Else) {
@@ -275,9 +279,11 @@ impl<'src> Parser<'src> {
 
     fn parse_while_statement(&mut self) -> ParseResult<ast::StmtKind> {
         self.expect(Token::While);
-        self.eat(Token::LeftParen)?;
+        self.eat(Token::LeftParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, "(", Item::While))?;
         let condition = self.parse_expression()?;
-        self.eat(Token::RightParen)?;
+        self.eat(Token::RightParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ")", Item::Condition))?;
 
         let body = self.parse_spanned_statement()?;
 
@@ -289,7 +295,8 @@ impl<'src> Parser<'src> {
         // TODO: this one's very messy, can we make it less ridiculous?
         let whole_lo = self.current.span;
 
-        self.eat(Token::LeftParen)?;
+        self.eat(Token::LeftParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, "(", Item::For))?;
 
         // Figure out the three parts of the loop; each is optional
         let init_lo = self.current.span;
@@ -299,7 +306,8 @@ impl<'src> Parser<'src> {
             Some(self.parse_variable_decl()?)
         } else {
             let expr = self.parse_expression()?;
-            self.eat(Token::Semicolon)?;
+            self.eat(Token::Semicolon)
+                .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::Expression))?;
             Some(ast::StmtKind::Expression(expr))
         };
         let initializer = initializer.map(|s| mk_stmt(s, init_lo.to(self.previous.span)));
@@ -309,14 +317,16 @@ impl<'src> Parser<'src> {
         } else {
             self.parse_expression()?
         };
-        self.eat(Token::Semicolon)?;
+        self.eat(Token::Semicolon)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::Condition))?;
 
         let increment = if self.check(Token::RightParen) {
             None
         } else {
             Some(self.parse_expression()?)
         };
-        self.eat(Token::RightParen)?;
+        self.eat(Token::RightParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ")", Item::ForClause))?;
 
         // Now we read the body, and modify it so that it has the semantics of
         // the for-loop.
@@ -353,7 +363,8 @@ impl<'src> Parser<'src> {
             None
         };
 
-        self.eat(Token::Semicolon)?;
+        self.eat(Token::Semicolon)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::ReturnValue))?;
         Ok(ast::StmtKind::Return(expr))
     }
 
@@ -368,7 +379,7 @@ impl<'src> Parser<'src> {
 
         if self.current.token != Token::EndOfFile {
             // This must be a `}`, because of the loop condition.
-            self.eat(Token::RightBrace).unwrap();
+            self.expect(Token::RightBrace);
             Ok(stmts)
         } else {
             Err(Error::UnclosedBrace(self.current.span))
@@ -497,7 +508,8 @@ impl<'src> Parser<'src> {
             // Parentheses
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
-                self.eat(Token::RightParen)?;
+                self.eat(Token::RightParen)
+                    .map_err(|_| Error::ExpectAfter(self.previous.span, ";", Item::Expression))?;
                 return Ok(expr);
             }
             t => return Err(Error::ExpectedExprAt(lo, t.clone())),
@@ -515,11 +527,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_comma_sep<T, F>(&mut self, elt_parser: F) -> ParseResult<Vec<T>>
+    fn parse_comma_sep_tail<T, F>(&mut self, elt_parser: F) -> ParseResult<Vec<T>>
     where
         F: Fn(&mut Parser<'src>) -> ParseResult<T>,
     {
-        self.eat(Token::LeftParen)?;
         let mut elements = vec![];
 
         // Check for the zero-argument case
@@ -541,7 +552,9 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_fn_args(&mut self) -> ParseResult<Vec<ast::Expr>> {
-        let args = self.parse_comma_sep(Self::parse_expression)?;
+        self.expect(Token::LeftParen);
+
+        let args = self.parse_comma_sep_tail(Self::parse_expression)?;
         if let Some(extra_args) = args.get(MAX_NUMBER_ARGS..) {
             for arg in extra_args.iter() {
                 self.emit_error(Error::TooManyArgs(arg.span));
@@ -554,7 +567,10 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_fn_params(&mut self) -> ParseResult<Vec<ast::Identifier>> {
-        let params = self.parse_comma_sep(Self::parse_identifier)?;
+        self.eat(Token::LeftParen)
+            .map_err(|_| Error::ExpectAfter(self.previous.span, "(", Item::FunctionName))?;
+
+        let params = self.parse_comma_sep_tail(Self::parse_identifier)?;
         if let Some(extra_params) = params.get(MAX_NUMBER_ARGS..) {
             for ident in extra_params.iter() {
                 self.emit_error(Error::TooManyParams(ident.span));

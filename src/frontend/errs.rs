@@ -27,6 +27,15 @@ pub enum Item {
     VariableDecl,
     FunctionBody,
     Expression,
+    ClassBody,
+    PrintValue,
+    ReturnValue,
+    FunctionName,
+    If,
+    While,
+    For,
+    Condition,
+    ForClause,
 }
 
 pub type ParseResult<T> = Result<T, Error>;
@@ -114,6 +123,15 @@ impl Item {
             Item::VariableDecl => "variable declaration",
             Item::FunctionBody => "function body",
             Item::Expression => "expression",
+            Item::ClassBody => "class body",
+            Item::PrintValue => "value",
+            Item::ReturnValue => "return value",
+            Item::FunctionName => "function name",
+            Item::If => "'if'",
+            Item::While => "'while'",
+            Item::For => "'for'",
+            Item::Condition => "condition",
+            Item::ForClause => "for clauses"
         }
     }
 }
