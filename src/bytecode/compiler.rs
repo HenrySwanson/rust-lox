@@ -448,8 +448,10 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no)?,
             ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
             ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
-            ast::ExprKind::Variable(var) => self.get_variable(var, line_no)?,
-            ast::ExprKind::Assignment(var, expr) => self.set_variable(var, expr, line_no)?,
+            ast::ExprKind::Variable(var) => self.get_variable(&var.name, var.span.lo.line_no)?,
+            ast::ExprKind::Assignment(var, expr) => {
+                self.set_variable(&var.name, expr, var.span.lo.line_no)?
+            }
             ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
                 self.compile_and(lhs, rhs)?
             }

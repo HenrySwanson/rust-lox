@@ -9,6 +9,9 @@
     var i = -1;
     print i; // expect: -1
   }
+
+  // The previous shenanigans did not affect the original variable
+  print i;  // expect: before
 }
 
 {

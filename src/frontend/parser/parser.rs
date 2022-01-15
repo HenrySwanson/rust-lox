@@ -489,7 +489,9 @@ impl<'src> Parser<'src> {
             Token::String(s) => from_lit(ast::Literal::Str(s.to_owned())),
             Token::Nil => from_lit(ast::Literal::Nil),
             // Other things
-            Token::Identifier(name) => ast::ExprKind::Variable(name.to_owned()),
+            Token::Identifier(name) => {
+                ast::ExprKind::Variable(ast::Identifier::new(name.to_owned(), lo))
+            }
             Token::This => ast::ExprKind::This,
             Token::Super => {
                 self.eat(Token::Dot, ErrorKind::ExpectSuperDot)?;

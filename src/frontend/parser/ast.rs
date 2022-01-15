@@ -46,8 +46,8 @@ pub enum ExprKind {
     BinOp(BinaryOperator, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryOperator, Box<Expr>),
     Logical(LogicalOperator, Box<Expr>, Box<Expr>),
-    Variable(String),
-    Assignment(String, Box<Expr>),
+    Variable(Identifier),
+    Assignment(Identifier, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Get(Box<Expr>, Identifier),
     Set(Box<Expr>, Identifier, Box<Expr>),
@@ -137,9 +137,9 @@ impl Expr {
                 lhs.lispy_string(),
                 rhs.lispy_string()
             ),
-            ExprKind::Variable(var) => var.clone(),
+            ExprKind::Variable(var) => var.name.clone(),
             ExprKind::Assignment(var, expr) => {
-                format!("(set {} {})", var, expr.lispy_string())
+                format!("(set {} {})", var.name, expr.lispy_string())
             }
             ExprKind::Call(callee, args) => {
                 let exprs: Vec<_> = args.iter().map(|a| a.lispy_string()).collect();

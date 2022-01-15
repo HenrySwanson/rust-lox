@@ -282,13 +282,13 @@ impl Resolver {
             }
             frontend_ast::ExprKind::Variable(var) => {
                 // Check if we're in the middle of initializing ourselves
-                if self.is_during_initializer(var) {
-                    return Err(Error::UsedInOwnInitializer(var.to_owned()));
+                if self.is_during_initializer(&var.name) {
+                    return Err(Error::UsedInOwnInitializer(var.name.to_owned()));
                 }
-                ast::ExprKind::Variable(self.resolve_variable(var))
+                ast::ExprKind::Variable(self.resolve_variable(&var.name))
             }
             frontend_ast::ExprKind::Assignment(var, subexpr) => {
-                let var = self.resolve_variable(var);
+                let var = self.resolve_variable(&var.name);
                 let subexpr = Box::new(self.resolve_expression(subexpr)?);
                 ast::ExprKind::Assignment(var, subexpr)
             }
