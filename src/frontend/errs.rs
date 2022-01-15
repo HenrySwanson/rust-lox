@@ -4,21 +4,27 @@ use super::token::Token;
 pub const MAX_NUMBER_ARGS: usize = 255;
 
 #[derive(Debug)]
-pub enum Error {
-    InvalidToken(Span, String),
-    ExpectedExprAt(Span, Token),
-    ExpectedIdentifier(Span),
-    InvalidAssignment(Span),
-    TooManyArgs(Span),
-    TooManyParams(Span),
-    UnclosedBrace(Span),
-    ExpectCommaBetween(Span),
-    ExpectSuperDot(Span),
-    ExpectSuperMethod(Span),
-    ExpectSuperclassName(Span),
-    ExpectPropertyName(Span),
-    ExpectBefore(Span, &'static str, Item),
-    ExpectAfter(Span, &'static str, Item),
+pub struct Error {
+    pub span: Span,
+    pub kind: ErrorKind,
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+    InvalidToken(String),
+    ExpectedExprAt(Token),
+    ExpectedIdentifier,
+    InvalidAssignment,
+    TooManyArgs,
+    TooManyParams,
+    UnclosedBrace,
+    ExpectCommaBetween,
+    ExpectSuperDot,
+    ExpectSuperMethod,
+    ExpectSuperclassName,
+    ExpectPropertyName,
+    ExpectBefore(&'static str, Item),
+    ExpectAfter(&'static str, Item),
 }
 
 #[derive(Debug)]
@@ -41,66 +47,67 @@ pub type ParseResult<T> = Result<T, Error>;
 
 impl Error {
     pub fn render(&self, source: &str) -> String {
-        match self {
-            Error::InvalidToken(_span, msg) => {
+        let span = &self.span;
+        match &self.kind {
+            ErrorKind::InvalidToken(msg) => {
                 format!("Error: {}.", msg)
             }
-            Error::ExpectedExprAt(span, _) => {
-                format!("{}: Expect expression.", get_error_prefix(span, source),)
+            ErrorKind::ExpectedExprAt(_) => {
+                format!("{}: Expect expression.", get_error_prefix(span, source))
             }
-            Error::ExpectedIdentifier(span) => {
-                format!("{}: Expect variable name.", get_error_prefix(span, source),)
+            ErrorKind::ExpectedIdentifier => {
+                format!("{}: Expect variable name.", get_error_prefix(span, source))
             }
-            Error::InvalidAssignment(span) => {
+            ErrorKind::InvalidAssignment => {
                 format!(
                     "{}: Invalid assignment target.",
                     get_error_prefix(span, source),
                 )
             }
-            Error::TooManyArgs(span) => {
+            ErrorKind::TooManyArgs => {
                 format!(
                     "{}: Can't have more than {} arguments.",
                     get_error_prefix(span, source),
                     MAX_NUMBER_ARGS,
                 )
             }
-            Error::TooManyParams(span) => {
+            ErrorKind::TooManyParams => {
                 format!(
                     "{}: Can't have more than {} parameters.",
                     get_error_prefix(span, source),
                     MAX_NUMBER_ARGS,
                 )
             }
-            Error::UnclosedBrace(span) => {
+            ErrorKind::UnclosedBrace => {
                 format!("{}: Expected }}", get_error_prefix(span, source))
             }
-            Error::ExpectSuperDot(span) => format!(
+            ErrorKind::ExpectSuperDot => format!(
                 "{}: Expect '.' after 'super'.",
                 get_error_prefix(span, source),
             ),
-            Error::ExpectSuperMethod(span) => format!(
+            ErrorKind::ExpectSuperMethod => format!(
                 "{}: Expect superclass method name.",
                 get_error_prefix(span, source),
             ),
-            Error::ExpectSuperclassName(span) => format!(
+            ErrorKind::ExpectSuperclassName => format!(
                 "{}: Expect superclass name.",
                 get_error_prefix(span, source),
             ),
-            Error::ExpectPropertyName(span) => format!(
+            ErrorKind::ExpectPropertyName => format!(
                 "{}: Expect property name after '.'.",
                 get_error_prefix(span, source),
             ),
-            Error::ExpectCommaBetween(span) => format!(
+            ErrorKind::ExpectCommaBetween => format!(
                 "{}: Expect ',' between elements.",
                 get_error_prefix(span, source),
             ),
-            Error::ExpectBefore(span, expected, previous) => format!(
+            ErrorKind::ExpectBefore(expected, previous) => format!(
                 "{}: Expect '{}' before {}.",
                 get_error_prefix(span, source),
                 expected,
                 previous.as_str(),
             ),
-            Error::ExpectAfter(span, expected, previous) => format!(
+            ErrorKind::ExpectAfter(expected, previous) => format!(
                 "{}: Expect '{}' after {}.",
                 get_error_prefix(span, source),
                 expected,
