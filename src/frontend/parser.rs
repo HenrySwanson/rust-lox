@@ -67,8 +67,6 @@ impl<'src> Parser<'src> {
 
     /// Same as try_eat, but returns an error if the token doesn't match.
     fn eat(&mut self, expected: Token, error: ErrorKind) -> ParseResult<()> {
-        // TODO: take in a closure for producing the error. the closure takes the SpannedToken
-        // that didn't match.
         self.bump()?;
 
         if self.previous.token == expected {
@@ -173,7 +171,7 @@ impl<'src> Parser<'src> {
 
     fn parse_variable_decl(&mut self) -> ParseResult<ast::StmtKind> {
         self.expect(Token::Var);
-        let name = self.parse_identifier()?;
+        let name = self.parse_identifier(ErrorKind::ExpectedIdentifier)?;
         let expr = if self.try_eat(Token::Equals) {
             self.parse_expression()?
         } else {
@@ -188,7 +186,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_function_data(&mut self) -> ParseResult<ast::FunctionDecl> {
-        let name = self.parse_identifier()?;
+        let name = self.parse_identifier(ErrorKind::ExpectedIdentifier)?;
         let params = self.parse_fn_params()?;
 
         self.eat(
@@ -203,13 +201,10 @@ impl<'src> Parser<'src> {
 
     fn parse_class_decl(&mut self) -> ParseResult<ast::StmtKind> {
         self.expect(Token::Class);
-        let name = self.parse_identifier()?;
+        let name = self.parse_identifier(ErrorKind::ExpectedIdentifier)?;
 
         let superclass = if self.try_eat(Token::LeftAngle) {
-            let superclass_name = self.parse_identifier().map_err(|_| Error {
-                span: self.previous.span,
-                kind: ErrorKind::ExpectSuperclassName,
-            })?;
+            let superclass_name = self.parse_identifier(ErrorKind::ExpectSuperclassName)?;
             Some(superclass_name)
         } else {
             None
@@ -468,11 +463,7 @@ impl<'src> Parser<'src> {
                 }
                 InfixOperator::Property => {
                     // The RHS must be an identifier
-                    // TODO: parse_identifier could also take an error-kind
-                    let rhs = self.parse_identifier().map_err(|_| Error {
-                        span: self.previous.span,
-                        kind: ErrorKind::ExpectPropertyName,
-                    })?;
+                    let rhs = self.parse_identifier(ErrorKind::ExpectPropertyName)?;
                     ast::ExprKind::Get(Box::new(lhs), rhs)
                 }
             };
@@ -502,10 +493,7 @@ impl<'src> Parser<'src> {
             Token::This => ast::ExprKind::This,
             Token::Super => {
                 self.eat(Token::Dot, ErrorKind::ExpectSuperDot)?;
-                let method_name = self.parse_identifier().map_err(|_| Error {
-                    span: self.previous.span,
-                    kind: ErrorKind::ExpectSuperMethod,
-                })?;
+                let method_name = self.parse_identifier(ErrorKind::ExpectSuperMethod)?;
                 ast::ExprKind::Super(method_name)
             }
             // Parentheses
@@ -527,7 +515,7 @@ impl<'src> Parser<'src> {
         Ok(mk_expr(expr_kind, lo.to(self.previous.span)))
     }
 
-    fn parse_identifier(&mut self) -> ParseResult<ast::Identifier> {
+    fn parse_identifier(&mut self, error: ErrorKind) -> ParseResult<ast::Identifier> {
         self.bump()?;
         match &self.previous.token {
             Token::Identifier(name) => {
@@ -535,7 +523,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(Error {
                 span: self.previous.span,
-                kind: ErrorKind::ExpectedIdentifier,
+                kind: error,
             }),
         }
     }
@@ -587,7 +575,8 @@ impl<'src> Parser<'src> {
             ErrorKind::ExpectAfter("(", Item::FunctionName),
         )?;
 
-        let params = self.parse_comma_sep_tail(Self::parse_identifier)?;
+        let params =
+            self.parse_comma_sep_tail(|this| this.parse_identifier(ErrorKind::ExpectedIdentifier))?;
         if let Some(extra_params) = params.get(MAX_NUMBER_ARGS..) {
             for ident in extra_params.iter() {
                 self.emit_error(Error {
