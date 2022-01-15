@@ -74,6 +74,7 @@ pub struct FunctionDecl {
     pub ident: Identifier,
     pub params: Vec<Identifier>,
     pub body: Vec<Stmt>,
+    pub span: Span,
 }
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum UnaryOperator {
@@ -167,11 +168,12 @@ impl Identifier {
 }
 
 impl FunctionDecl {
-    pub fn new(ident: Identifier, params: Vec<Identifier>, body: Vec<Stmt>) -> Self {
+    pub fn new(ident: Identifier, params: Vec<Identifier>, body: Vec<Stmt>, span: Span) -> Self {
         FunctionDecl {
             ident,
             params,
             body,
+            span,
         }
     }
 }

@@ -186,6 +186,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_function_data(&mut self) -> ParseResult<ast::FunctionDecl> {
+        // TODO: can we capture "function" in here too?
+        let lo = self.current.span;
         let name = self.parse_identifier(ErrorKind::ExpectedIdentifier)?;
         let params = self.parse_fn_params()?;
 
@@ -194,8 +196,9 @@ impl<'src> Parser<'src> {
             ErrorKind::ExpectBefore("{", Item::FunctionBody),
         )?;
         let stmts = self.parse_braced_statement_tail()?;
+        let span = lo.to(self.previous.span);
 
-        let fn_data = ast::FunctionDecl::new(name, params, stmts);
+        let fn_data = ast::FunctionDecl::new(name, params, stmts, span);
         Ok(fn_data)
     }
 
