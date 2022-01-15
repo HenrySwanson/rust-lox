@@ -1,7 +1,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::rc::Rc;
 
-use crate::frontend::ast;
+use crate::frontend::{ast, Span};
 
 use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{CompilerError, CompilerResult};
@@ -160,7 +160,7 @@ impl<'strtable> Compiler<'strtable> {
         }
 
         // Return, to exit the VM
-        self.emit_op(RichOpcode::Return, 0);
+        self.emit_op(RichOpcode::Return, Span::dummy());
 
         // Return the chunk defining main()
         let root_state = self.context_stack.pop().expect("Context stack empty!");
@@ -171,22 +171,21 @@ impl<'strtable> Compiler<'strtable> {
     }
 
     pub fn compile_statement(&mut self, stmt: &ast::Stmt) -> CompilerResult<()> {
-        let line_no = stmt.span.lo.line_no;
         match &stmt.kind {
             ast::StmtKind::Expression(expr) => {
                 self.compile_expression(expr)?;
-                self.emit_op(RichOpcode::Pop, line_no);
+                self.emit_op(RichOpcode::Pop, stmt.span);
             }
             ast::StmtKind::Print(expr) => {
                 self.compile_expression(expr)?;
-                self.emit_op(RichOpcode::Print, line_no);
+                self.emit_op(RichOpcode::Print, stmt.span);
             }
             ast::StmtKind::VariableDecl(ident, expr) => {
                 // Create instructions to put the value of expr on top of the stack
                 self.compile_expression(expr)?;
 
                 self.declare_variable(&ident.name)?;
-                self.define_variable(&ident.name, line_no)?;
+                self.define_variable(&ident)?;
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
@@ -196,10 +195,15 @@ impl<'strtable> Compiler<'strtable> {
                 self.end_scope();
             }
             ast::StmtKind::IfElse(condition, if_body, else_body) => {
-                self.compile_if_statement(condition, if_body.as_ref(), else_body.as_deref())?;
+                self.compile_if_statement(
+                    condition,
+                    if_body.as_ref(),
+                    else_body.as_deref(),
+                    stmt.span,
+                )?;
             }
             ast::StmtKind::While(condition, body) => {
-                self.compile_while_statement(condition, body.as_ref())?;
+                self.compile_while_statement(condition, body.as_ref(), stmt.span)?;
             }
             ast::StmtKind::For(initializer, condition, increment, body) => {
                 self.compile_for_statement(
@@ -207,6 +211,7 @@ impl<'strtable> Compiler<'strtable> {
                     condition.as_deref(),
                     increment.as_deref(),
                     body.as_ref(),
+                    stmt.span,
                 )?;
             }
             ast::StmtKind::FunctionDecl(fn_decl) => {
@@ -217,21 +222,21 @@ impl<'strtable> Compiler<'strtable> {
                     self.get_ctx_mut().mark_last_local_initialized();
                 }
 
-                self.compile_function_decl(fn_decl, line_no, FunctionType::Function)?;
+                self.compile_function_decl(fn_decl, FunctionType::Function)?;
 
                 // Lastly, define the function variable
-                self.define_variable(&fn_decl.ident.name, line_no)?;
+                self.define_variable(&fn_decl.ident)?;
             }
             ast::StmtKind::Return(expr) => {
-                self.compile_return(expr.as_ref(), line_no)?;
+                self.compile_return(expr.as_ref(), stmt.span)?;
             }
             ast::StmtKind::ClassDecl(ident, superclass, methods) => {
                 self.declare_variable(&ident.name)?;
 
                 // Store the name as a constant
                 let idx = self.add_string_constant(&ident.name)?;
-                self.emit_op(RichOpcode::MakeClass(idx), line_no);
-                self.define_variable(&ident.name, line_no)?;
+                self.emit_op(RichOpcode::MakeClass(idx), ident.span);
+                self.define_variable(&ident)?;
 
                 // Push the class context onto the stack
                 self.class_stack.push(ClassContext {
@@ -245,15 +250,17 @@ impl<'strtable> Compiler<'strtable> {
                         return Err(CompilerError::SelfInherit(ident.name.clone()));
                     }
 
-                    self.begin_scope();
-                    self.declare_variable(SUPER_STR)?;
-                    self.define_variable(SUPER_STR, line_no)?;
+                    let synthetic_super = self.synthetic_id(SUPER_STR, stmt.span);
 
-                    self.get_variable(&superclass.name, line_no)?;
-                    self.get_variable(&ident.name, line_no)?;
-                    self.emit_op(RichOpcode::Inherit, line_no);
+                    self.begin_scope();
+                    self.declare_variable(&synthetic_super.name)?;
+                    self.define_variable(&synthetic_super)?;
+
+                    self.get_variable(&superclass)?;
+                    self.get_variable(&ident)?;
+                    self.emit_op(RichOpcode::Inherit, superclass.span);
                 } else {
-                    self.get_variable(&ident.name, line_no)?;
+                    self.get_variable(&ident)?;
                 }
 
                 // Deal with the methods
@@ -264,14 +271,15 @@ impl<'strtable> Compiler<'strtable> {
                         FunctionType::Method
                     };
                     // TODO deal with function decl span better
-                    self.compile_function_decl(method, 0, fn_type)?;
+                    self.compile_function_decl(method, fn_type)?;
 
                     let idx = self.add_string_constant(&method.ident.name)?;
-                    self.emit_op(RichOpcode::MakeMethod(idx), 0);
+                    self.emit_op(RichOpcode::MakeMethod(idx), method.span);
                 }
 
                 // Pop the class off the stack
-                self.emit_op(RichOpcode::Pop, line_no);
+                // Q: should this be a span for the whole class declaration?
+                self.emit_op(RichOpcode::Pop, ident.span);
 
                 if superclass.is_some() {
                     self.end_scope();
@@ -289,22 +297,21 @@ impl<'strtable> Compiler<'strtable> {
         condition: &ast::Expr,
         if_body: &ast::Stmt,
         else_body: Option<&ast::Stmt>,
+        whole_span: Span,
     ) -> CompilerResult<()> {
-        let line_no = condition.span.lo.line_no;
-
         self.compile_expression(condition)?;
 
         // If we pass the jump, pop the condition and do the if-body
-        let jump_to_else = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
-        self.emit_op(RichOpcode::Pop, line_no);
+        let jump_to_else = self.emit_jump(RichOpcode::JumpIfFalse(0), whole_span);
+        self.emit_op(RichOpcode::Pop, whole_span);
         self.compile_statement(if_body)?;
 
         // Otherwise, pop the condition now, and do the else body.
         // Note that we always need an else-jump so that we only ever
         // pop once.
-        let jump_over_else = self.emit_jump(RichOpcode::Jump(0), line_no);
+        let jump_over_else = self.emit_jump(RichOpcode::Jump(0), whole_span);
         self.patch_jump(jump_to_else)?;
-        self.emit_op(RichOpcode::Pop, line_no);
+        self.emit_op(RichOpcode::Pop, whole_span);
         if let Some(else_body) = else_body {
             self.compile_statement(else_body)?;
         }
@@ -317,19 +324,19 @@ impl<'strtable> Compiler<'strtable> {
         &mut self,
         condition: &ast::Expr,
         body: &ast::Stmt,
+        whole_span: Span,
     ) -> CompilerResult<()> {
-        let line_no = condition.span.lo.line_no;
         let loop_start = self.current_chunk().len();
 
         self.compile_expression(condition)?;
-        let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
-        self.emit_op(RichOpcode::Pop, line_no);
+        let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), whole_span);
+        self.emit_op(RichOpcode::Pop, whole_span);
 
         self.compile_statement(body)?;
-        self.emit_loop(loop_start, line_no)?;
+        self.emit_loop(loop_start, whole_span)?;
 
         self.patch_jump(exit_jump)?;
-        self.emit_op(RichOpcode::Pop, line_no);
+        self.emit_op(RichOpcode::Pop, whole_span);
 
         Ok(())
     }
@@ -340,6 +347,7 @@ impl<'strtable> Compiler<'strtable> {
         condition: Option<&ast::Expr>,
         increment: Option<&ast::Expr>,
         body: &ast::Stmt,
+        whole_span: Span,
     ) -> CompilerResult<()> {
         self.begin_scope();
 
@@ -352,10 +360,9 @@ impl<'strtable> Compiler<'strtable> {
         let loop_start = self.current_chunk().len();
         let exit_jump = match condition {
             Some(condition) => {
-                let line_no = condition.span.lo.line_no;
                 self.compile_expression(condition)?;
-                let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), line_no);
-                self.emit_op(RichOpcode::Pop, line_no);
+                let exit_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), whole_span);
+                self.emit_op(RichOpcode::Pop, whole_span);
                 Some(exit_jump)
             }
             None => None,
@@ -369,16 +376,15 @@ impl<'strtable> Compiler<'strtable> {
         // Compile the increment
         if let Some(increment) = increment {
             self.compile_expression(increment)?;
-            self.emit_op(RichOpcode::Pop, increment.span.lo.line_no);
+            self.emit_op(RichOpcode::Pop, whole_span);
         }
 
         // Lastly, compile the jump back to the start of the loop and patch the exit jump
-        let last_line_no = body.span.hi.line_no;
-        self.emit_loop(loop_start, last_line_no)?;
+        self.emit_loop(loop_start, whole_span)?;
         if let Some(exit_jump) = exit_jump {
             self.patch_jump(exit_jump)?;
         }
-        self.emit_op(RichOpcode::Pop, last_line_no);
+        self.emit_op(RichOpcode::Pop, whole_span);
 
         // This closes the scope that started the initializer. We can only close
         // this scope once all the loop is resolved, because this emits instructions!
@@ -390,7 +396,6 @@ impl<'strtable> Compiler<'strtable> {
     fn compile_function_decl(
         &mut self,
         fn_decl: &ast::FunctionDecl,
-        line_no: usize,
         fn_type: FunctionType,
     ) -> CompilerResult<()> {
         // Create the new compiler context
@@ -403,17 +408,16 @@ impl<'strtable> Compiler<'strtable> {
         for param in fn_decl.params.iter() {
             // Unlike normal local variables, we don't compile any expressions here
             self.declare_variable(&param.name)?;
-            self.define_variable(&param.name, line_no)?;
+            self.define_variable(&param)?;
         }
 
         // Compile the function body, and add an implicit return
         for stmt in fn_decl.body.iter() {
             self.compile_statement(stmt)?;
         }
-        // TODO: deal with the empty function better!
-        let last_line = fn_decl.body.last().map_or(0, |stmt| stmt.span.hi.line_no);
-        self.compile_return(None, last_line)?;
-        self.emit_op(RichOpcode::Return, last_line);
+        // TODO: can we emit a span for "end of function?"
+        self.compile_return(None, fn_decl.span)?;
+        self.emit_op(RichOpcode::Return, fn_decl.span);
 
         // no need to end scope, we're just killing this compiler context completely
         let ctx = self.context_stack.pop().expect("Context stack empty!");
@@ -431,11 +435,12 @@ impl<'strtable> Compiler<'strtable> {
         // Unlike regular constants, we load this with MAKE_CLOSURE
         // TODO should i have a separate list for these in the chunk?
         let idx = self.add_constant(fn_template)?;
-        self.emit_op(RichOpcode::MakeClosure(idx), line_no);
+        self.emit_op(RichOpcode::MakeClosure(idx), fn_decl.span);
 
         // Now encode all the upvalues that this closure should have
         for upvalue in ctx.upvalues.iter().cloned() {
-            self.current_chunk().write_upvalue(upvalue, line_no);
+            self.current_chunk()
+                .write_upvalue(upvalue, fn_decl.span.lo.line_no);
         }
 
         Ok(())
@@ -443,60 +448,61 @@ impl<'strtable> Compiler<'strtable> {
 
     fn compile_expression(&mut self, expr: &ast::Expr) -> CompilerResult<()> {
         // stack effect: puts value on top of the stack
-        let line_no = expr.span.lo.line_no;
         match &expr.kind {
-            ast::ExprKind::Literal(literal) => self.compile_literal(literal, line_no)?,
-            ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs)?,
-            ast::ExprKind::UnaryOp(op, expr) => self.compile_prefix(*op, expr)?,
-            ast::ExprKind::Variable(var) => self.get_variable(&var.name, var.span.lo.line_no)?,
-            ast::ExprKind::Assignment(var, expr) => {
-                self.set_variable(&var.name, expr, var.span.lo.line_no)?
-            }
+            ast::ExprKind::Literal(literal) => self.compile_literal(literal, expr.span)?,
+            ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, expr.span)?,
+            ast::ExprKind::UnaryOp(op, subexpr) => self.compile_prefix(*op, subexpr, expr.span)?,
+            ast::ExprKind::Variable(var) => self.get_variable(&var)?,
+            ast::ExprKind::Assignment(var, subexpr) => self.set_variable(&var, subexpr)?,
             ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
-                self.compile_and(lhs, rhs)?
+                self.compile_and(lhs, rhs, expr.span)?
             }
             ast::ExprKind::Logical(ast::LogicalOperator::Or, lhs, rhs) => {
-                self.compile_or(lhs, rhs)?
+                self.compile_or(lhs, rhs, expr.span)?
             }
             ast::ExprKind::Call(callee, args) => self.compile_call(callee, args)?,
-            ast::ExprKind::Get(expr, property) => {
+            ast::ExprKind::Get(subexpr, property) => {
                 let idx = self.add_string_constant(&property.name)?;
-                self.compile_expression(expr)?;
-                self.emit_op(RichOpcode::GetProperty(idx), line_no);
+                self.compile_expression(subexpr)?;
+                self.emit_op(RichOpcode::GetProperty(idx), property.span);
             }
-            ast::ExprKind::Set(expr, property, value_expr) => {
+            ast::ExprKind::Set(subexpr, property, value_expr) => {
                 let idx = self.add_string_constant(&property.name)?;
-                self.compile_expression(expr)?;
+                self.compile_expression(subexpr)?;
                 self.compile_expression(value_expr)?;
-                self.emit_op(RichOpcode::SetProperty(idx), line_no);
+                self.emit_op(RichOpcode::SetProperty(idx), property.span);
             }
             ast::ExprKind::This => {
                 if self.class_stack.is_empty() {
                     return Err(CompilerError::ThisOutsideClass);
                 }
-                self.get_variable(THIS_STR, line_no)?;
+                let synthetic_this = self.synthetic_id(THIS_STR, expr.span);
+                self.get_variable(&synthetic_this)?;
             }
             ast::ExprKind::Super(method_name) => {
                 // Check if we are in a class with a superclass
                 self.check_super_validity()?;
 
-                self.get_variable(THIS_STR, line_no)?;
-                self.get_variable(SUPER_STR, line_no)?;
+                let synthetic_this = self.synthetic_id(THIS_STR, expr.span);
+                let synthetic_super = self.synthetic_id(SUPER_STR, expr.span);
+
+                self.get_variable(&synthetic_this)?;
+                self.get_variable(&synthetic_super)?;
 
                 let idx = self.add_string_constant(&method_name.name)?;
-                self.emit_op(RichOpcode::GetSuper(idx), line_no);
+                self.emit_op(RichOpcode::GetSuper(idx), expr.span);
             }
         };
 
         Ok(())
     }
 
-    fn compile_literal(&mut self, literal: &ast::Literal, line_no: usize) -> CompilerResult<()> {
+    fn compile_literal(&mut self, literal: &ast::Literal, span: Span) -> CompilerResult<()> {
         match literal {
             ast::Literal::Number(n) => {
                 let value = ChunkConstant::Number(*n);
                 let idx = self.add_constant(value)?;
-                self.emit_op(RichOpcode::Constant(idx), line_no);
+                self.emit_op(RichOpcode::Constant(idx), span);
             }
             ast::Literal::Boolean(b) => {
                 let opcode = if *b {
@@ -504,15 +510,15 @@ impl<'strtable> Compiler<'strtable> {
                 } else {
                     RichOpcode::False
                 };
-                self.emit_op(opcode, line_no);
+                self.emit_op(opcode, span);
             }
             ast::Literal::Str(s) => {
                 let value = ChunkConstant::String(self.string_table.get_interned(s));
                 let idx = self.add_constant(value)?;
-                self.emit_op(RichOpcode::Constant(idx), line_no);
+                self.emit_op(RichOpcode::Constant(idx), span);
             }
             ast::Literal::Nil => {
-                self.emit_op(RichOpcode::Nil, line_no);
+                self.emit_op(RichOpcode::Nil, span);
             }
         };
 
@@ -524,69 +530,73 @@ impl<'strtable> Compiler<'strtable> {
         op: ast::BinaryOperator,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
+        span: Span,
     ) -> CompilerResult<()> {
-        let line_no = lhs.span.hi.line_no; // I guess??
-
         self.compile_expression(lhs)?;
         self.compile_expression(rhs)?;
 
         match op {
-            ast::BinaryOperator::Add => self.emit_op(RichOpcode::Add, line_no),
-            ast::BinaryOperator::Subtract => self.emit_op(RichOpcode::Subtract, line_no),
-            ast::BinaryOperator::Multiply => self.emit_op(RichOpcode::Multiply, line_no),
-            ast::BinaryOperator::Divide => self.emit_op(RichOpcode::Divide, line_no),
-            ast::BinaryOperator::EqualTo => self.emit_op(RichOpcode::Equal, line_no),
+            ast::BinaryOperator::Add => self.emit_op(RichOpcode::Add, span),
+            ast::BinaryOperator::Subtract => self.emit_op(RichOpcode::Subtract, span),
+            ast::BinaryOperator::Multiply => self.emit_op(RichOpcode::Multiply, span),
+            ast::BinaryOperator::Divide => self.emit_op(RichOpcode::Divide, span),
+            ast::BinaryOperator::EqualTo => self.emit_op(RichOpcode::Equal, span),
             ast::BinaryOperator::NotEqualTo => {
-                self.emit_op(RichOpcode::Equal, line_no);
-                self.emit_op(RichOpcode::Not, line_no)
+                self.emit_op(RichOpcode::Equal, span);
+                self.emit_op(RichOpcode::Not, span)
             }
-            ast::BinaryOperator::GreaterThan => self.emit_op(RichOpcode::GreaterThan, line_no),
+            ast::BinaryOperator::GreaterThan => self.emit_op(RichOpcode::GreaterThan, span),
             ast::BinaryOperator::GreaterEq => {
-                self.emit_op(RichOpcode::LessThan, line_no);
-                self.emit_op(RichOpcode::Not, line_no)
+                self.emit_op(RichOpcode::LessThan, span);
+                self.emit_op(RichOpcode::Not, span)
             }
-            ast::BinaryOperator::LessThan => self.emit_op(RichOpcode::LessThan, line_no),
+            ast::BinaryOperator::LessThan => self.emit_op(RichOpcode::LessThan, span),
             ast::BinaryOperator::LessEq => {
-                self.emit_op(RichOpcode::GreaterThan, line_no);
-                self.emit_op(RichOpcode::Not, line_no)
+                self.emit_op(RichOpcode::GreaterThan, span);
+                self.emit_op(RichOpcode::Not, span)
             }
         };
 
         Ok(())
     }
 
-    fn compile_prefix(&mut self, op: ast::UnaryOperator, expr: &ast::Expr) -> CompilerResult<()> {
+    fn compile_prefix(
+        &mut self,
+        op: ast::UnaryOperator,
+        expr: &ast::Expr,
+        span: Span,
+    ) -> CompilerResult<()> {
         self.compile_expression(expr)?;
         let opcode = match op {
             ast::UnaryOperator::Negate => RichOpcode::Negate,
             ast::UnaryOperator::LogicalNot => RichOpcode::Not,
         };
 
-        self.emit_op(opcode, expr.span.lo.line_no);
+        self.emit_op(opcode, span);
         Ok(())
     }
 
-    fn compile_and(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> CompilerResult<()> {
+    fn compile_and(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> CompilerResult<()> {
         self.compile_expression(lhs)?;
 
         // lhs is now on the stack; if it's falsey, keep it. otherwise, try the rhs.
-        let jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
-        self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
+        let jump = self.emit_jump(RichOpcode::JumpIfFalse(0), span);
+        self.emit_op(RichOpcode::Pop, span);
         self.compile_expression(rhs)?;
         self.patch_jump(jump)?;
 
         Ok(())
     }
 
-    fn compile_or(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> CompilerResult<()> {
+    fn compile_or(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> CompilerResult<()> {
         self.compile_expression(lhs)?;
 
         // lhs is now on the stack. if it's true, we want to keep it.
-        let skip_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), lhs.span.lo.line_no);
-        let jump_for_true = self.emit_jump(RichOpcode::Jump(0), lhs.span.lo.line_no);
+        let skip_jump = self.emit_jump(RichOpcode::JumpIfFalse(0), span);
+        let jump_for_true = self.emit_jump(RichOpcode::Jump(0), span);
         self.patch_jump(skip_jump)?;
 
-        self.emit_op(RichOpcode::Pop, rhs.span.lo.line_no);
+        self.emit_op(RichOpcode::Pop, span);
         self.compile_expression(rhs)?;
         self.patch_jump(jump_for_true)?;
 
@@ -607,27 +617,28 @@ impl<'strtable> Compiler<'strtable> {
                 }
 
                 // Then we emit the OP_INVOKE
-                let line_no = callee.span.hi.line_no;
                 let idx = self.add_string_constant(&method_name.name)?;
 
-                self.emit_op(RichOpcode::Invoke(idx, num_args), line_no);
+                self.emit_op(RichOpcode::Invoke(idx, num_args), callee.span);
             }
             ast::ExprKind::Super(method_name) => {
                 self.check_super_validity()?;
 
                 // We put the receiver on the stack, then all the arguments, then the superclass
-                let line_no = callee.span.lo.line_no;
-                self.get_variable(THIS_STR, line_no)?;
+
+                let synthetic_this = self.synthetic_id(THIS_STR, callee.span);
+                let synthetic_super = self.synthetic_id(SUPER_STR, callee.span);
+
+                self.get_variable(&synthetic_this)?;
                 for arg in args.iter() {
                     self.compile_expression(arg)?;
                 }
-                self.get_variable(SUPER_STR, line_no)?;
+                self.get_variable(&synthetic_super)?;
 
                 // Then we emit the OP_SUPER_INVOKE
-                let line_no = callee.span.hi.line_no;
                 let idx = self.add_string_constant(&method_name.name)?;
 
-                self.emit_op(RichOpcode::SuperInvoke(idx, num_args), line_no);
+                self.emit_op(RichOpcode::SuperInvoke(idx, num_args), callee.span);
             }
             _ => {
                 // Normal path: put the callee and its args on the stack, in order
@@ -635,7 +646,7 @@ impl<'strtable> Compiler<'strtable> {
                 for arg in args.iter() {
                     self.compile_expression(arg)?;
                 }
-                self.emit_op(RichOpcode::Call(num_args), callee.span.hi.line_no);
+                self.emit_op(RichOpcode::Call(num_args), callee.span);
             }
         }
 
@@ -654,13 +665,13 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn define_variable(&mut self, name: &str, line_no: usize) -> CompilerResult<()> {
+    fn define_variable(&mut self, id: &ast::Identifier) -> CompilerResult<()> {
         // Check if we're defining a global or local variable
         if self.get_ctx().scope_depth == 0 {
             // We store the name of the global as a string constant, so the VM can
             // keep track of it.
-            let global_idx = self.add_string_constant(name)?;
-            self.emit_op(RichOpcode::DefineGlobal(global_idx), line_no);
+            let global_idx = self.add_string_constant(&id.name)?;
+            self.emit_op(RichOpcode::DefineGlobal(global_idx), id.span);
         } else {
             self.get_ctx_mut().mark_last_local_initialized();
         }
@@ -668,45 +679,40 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn get_variable(&mut self, var_name: &str, line_no: usize) -> CompilerResult<()> {
-        match self.resolve_variable(var_name)? {
+    fn get_variable(&mut self, id: &ast::Identifier) -> CompilerResult<()> {
+        match self.resolve_variable(&id.name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a GetGlobal instruction.
-                let global_idx = self.add_string_constant(var_name)?;
-                self.emit_op(RichOpcode::GetGlobal(global_idx), line_no);
+                let global_idx = self.add_string_constant(&id.name)?;
+                self.emit_op(RichOpcode::GetGlobal(global_idx), id.span);
             }
             VariableLocator::Local(idx) => {
-                self.emit_op(RichOpcode::GetLocal(idx), line_no);
+                self.emit_op(RichOpcode::GetLocal(idx), id.span);
             }
             VariableLocator::Upvalue(idx) => {
-                self.emit_op(RichOpcode::GetUpvalue(idx), line_no);
+                self.emit_op(RichOpcode::GetUpvalue(idx), id.span);
             }
         }
 
         Ok(())
     }
 
-    fn set_variable(
-        &mut self,
-        var_name: &str,
-        expr: &ast::Expr,
-        line_no: usize,
-    ) -> CompilerResult<()> {
+    fn set_variable(&mut self, id: &ast::Identifier, expr: &ast::Expr) -> CompilerResult<()> {
         // In any case, we need to emit instructions to put the result of the
         // expression on the stack.
         self.compile_expression(expr)?;
 
-        match self.resolve_variable(var_name)? {
+        match self.resolve_variable(&id.name)? {
             VariableLocator::Global => {
                 // Stash the name in the chunk constants, and emit a SetGlobal instruction.
-                let global_idx = self.add_string_constant(var_name)?;
-                self.emit_op(RichOpcode::SetGlobal(global_idx), line_no);
+                let global_idx = self.add_string_constant(&id.name)?;
+                self.emit_op(RichOpcode::SetGlobal(global_idx), id.span);
             }
             VariableLocator::Local(idx) => {
-                self.emit_op(RichOpcode::SetLocal(idx), line_no);
+                self.emit_op(RichOpcode::SetLocal(idx), id.span);
             }
             VariableLocator::Upvalue(idx) => {
-                self.emit_op(RichOpcode::SetUpvalue(idx), line_no);
+                self.emit_op(RichOpcode::SetUpvalue(idx), id.span);
             }
         }
 
@@ -740,6 +746,10 @@ impl<'strtable> Compiler<'strtable> {
             }
             None => Err(CompilerError::SuperOutsideClass),
         }
+    }
+
+    fn synthetic_id(&self, name: &str, span: Span) -> ast::Identifier {
+        ast::Identifier::new(name.to_owned(), span)
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -819,36 +829,38 @@ impl<'strtable> Compiler<'strtable> {
         Ok(VariableLocator::Upvalue(upvalue_idx))
     }
 
-    fn compile_return(&mut self, expr: Option<&ast::Expr>, line_no: usize) -> CompilerResult<()> {
+    fn compile_return(&mut self, expr: Option<&ast::Expr>, whole_span: Span) -> CompilerResult<()> {
         // Emit the instructions to put the return value on the stack
         match self.get_ctx().function_type {
             FunctionType::Root => return Err(CompilerError::ReturnAtTopLevel),
             FunctionType::Function | FunctionType::Method => match expr {
                 Some(expr) => self.compile_expression(expr)?,
-                None => self.emit_op(RichOpcode::Nil, line_no),
+                None => self.emit_op(RichOpcode::Nil, whole_span),
             },
             FunctionType::Initializer => {
                 if expr.is_some() {
                     return Err(CompilerError::ReturnInInitializer);
                 } else {
-                    self.emit_op(RichOpcode::GetLocal(0), line_no);
+                    self.emit_op(RichOpcode::GetLocal(0), whole_span);
                 }
             }
         };
 
-        self.emit_op(RichOpcode::Return, line_no);
+        self.emit_op(RichOpcode::Return, whole_span);
         Ok(())
     }
 
     // chunk-writing methods
 
-    fn emit_op(&mut self, op: RichOpcode, line_no: usize) {
-        self.current_chunk().write_op(op, line_no);
+    fn emit_op(&mut self, op: RichOpcode, span: Span) {
+        // We take the whole span as input, since everyone has a span, but we
+        // only store line number for runtime error purposes.
+        self.current_chunk().write_op(op, span.lo.line_no);
     }
 
-    fn emit_jump(&mut self, op: RichOpcode, line_no: usize) -> usize {
+    fn emit_jump(&mut self, op: RichOpcode, span: Span) -> usize {
         let jmp_idx = self.current_chunk().len();
-        self.emit_op(op, line_no);
+        self.emit_op(op, span);
         jmp_idx
     }
 
@@ -864,11 +876,11 @@ impl<'strtable> Compiler<'strtable> {
         Ok(())
     }
 
-    fn emit_loop(&mut self, loop_start_idx: usize, line_no: usize) -> CompilerResult<()> {
+    fn emit_loop(&mut self, loop_start_idx: usize, span: Span) -> CompilerResult<()> {
         // distance from (instruction after LOOP) to loop_start
         let distance = (self.current_chunk().len() + 3) - loop_start_idx;
         let distance = u16::try_from(distance).map_err(|_| CompilerError::JumpTooLong)?;
-        self.emit_op(RichOpcode::Loop(distance), line_no);
+        self.emit_op(RichOpcode::Loop(distance), span);
         Ok(())
     }
 
