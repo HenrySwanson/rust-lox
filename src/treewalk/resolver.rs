@@ -1,8 +1,7 @@
 use super::ast;
 use super::constants::{INIT_STR, SUPER_STR, THIS_STR};
 
-use crate::frontend::ast as frontend_ast;
-use crate::frontend::span::Span;
+use crate::frontend::{ast as frontend_ast, Span};
 
 use std::collections::HashMap;
 

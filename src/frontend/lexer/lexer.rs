@@ -1,5 +1,5 @@
+use super::super::span::Span;
 use super::cursor::Cursor;
-use super::span::Span;
 use super::token::{SpannedToken, Token};
 
 pub struct Lexer<'a> {

@@ -1,5 +1,5 @@
+use super::lexer::Token;
 use super::span::Span;
-use super::token::Token;
 
 pub const MAX_NUMBER_ARGS: usize = 255;
 

@@ -1,4 +1,4 @@
-use super::span::Span;
+use super::super::span::Span;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {

@@ -1,9 +1,9 @@
+use super::super::errs::{Error, ErrorKind, Item, ParseResult, MAX_NUMBER_ARGS};
+use super::super::lexer::Lexer;
+use super::super::lexer::{SpannedToken, Token};
+use super::super::span::Span;
 use super::ast;
-use super::errs::{Error, ErrorKind, Item, ParseResult, MAX_NUMBER_ARGS};
-use super::lexer::Lexer;
 use super::precedence::{InfixOperator, Precedence};
-use super::span::Span;
-use super::token::{SpannedToken, Token};
 
 pub struct Parser<'a> {
     source: &'a str,

@@ -1,5 +1,5 @@
+use super::super::lexer::Token;
 use super::ast::{BinaryOperator, LogicalOperator};
-use super::token::Token;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfixOperator {

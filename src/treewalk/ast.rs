@@ -1,5 +1,4 @@
-use crate::frontend::ast as frontend_ast;
-use crate::frontend::span::Span;
+use crate::frontend::{ast as frontend_ast, Span};
 
 // AST Nodes
 

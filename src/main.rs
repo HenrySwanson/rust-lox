@@ -1,6 +1,5 @@
 use rust_lox::bytecode::{Compiler, VM};
-use rust_lox::frontend::ast;
-use rust_lox::frontend::Parser;
+use rust_lox::frontend::{ast, Parser};
 use rust_lox::treewalk::{Interpreter, Resolver};
 
 use std::io::Write;

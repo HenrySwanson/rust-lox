@@ -1,4 +1,4 @@
-use super::span::CodePosition;
+use super::super::span::CodePosition;
 use std::iter::Peekable;
 use std::str::CharIndices;
 
