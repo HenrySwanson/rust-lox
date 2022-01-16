@@ -118,8 +118,8 @@ impl<T> SafeStack<T> {
         self.set(idx, item)
     }
 
-    fn peek_n(&self, depth: usize) -> RuntimeResult<&[T]> {
-        let start_idx = self.depth(depth)?;
+    fn peek_n(&self, len: usize) -> RuntimeResult<&[T]> {
+        let start_idx = self.depth(len)? + 1;
         // Open-ended range, must succeed
         Ok(self.stack.get(start_idx..).unwrap())
     }
@@ -132,8 +132,9 @@ impl<T> SafeStack<T> {
         self.stack.pop().ok_or(RuntimeError::StackUnderflow)
     }
 
-    fn pop_n(&mut self, depth: usize) -> RuntimeResult<()> {
-        let idx = self.depth(depth)?;
+    fn pop_n(&mut self, num: usize) -> RuntimeResult<()> {
+        // TODO doc better
+        let idx = self.depth(num)? + 1;
         self.truncate(idx);
         Ok(())
     }
