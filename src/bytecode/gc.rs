@@ -133,6 +133,10 @@ impl<T: Traceable> GcHeap<T> {
             ptr.unmark();
         }
     }
+
+    pub fn size(&self) -> usize {
+        self.objects.len() * std::mem::size_of::<T>()
+    }
 }
 
 impl<T: Traceable> Drop for GcHeap<T> {

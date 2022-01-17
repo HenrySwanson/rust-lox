@@ -13,7 +13,7 @@ use super::value::{
     Value,
 };
 
-const GC_PERIOD: u32 = 1000;
+const GC_HEAP_RATIO: f64 = 2.0;
 const MAX_FRAMES: usize = 64;
 
 struct CallFrame {
@@ -35,6 +35,7 @@ struct ObjectHeap {
     class_heap: GcHeap<LoxClass>,
     instance_heap: GcHeap<LoxInstance>,
     bound_method_heap: GcHeap<LoxBoundMethod>,
+    next_gc_threshold: usize,
 }
 
 pub struct VM<W> {
@@ -159,6 +160,7 @@ impl ObjectHeap {
             class_heap: GcHeap::new(),
             instance_heap: GcHeap::new(),
             bound_method_heap: GcHeap::new(),
+            next_gc_threshold: 1024 * 1024,  // arbitrary!
         }
     }
 
@@ -214,6 +216,21 @@ impl ObjectHeap {
         self.class_heap.sweep();
         self.instance_heap.sweep();
         self.bound_method_heap.sweep();
+        self.next_gc_threshold = (self.size() as f64 * GC_HEAP_RATIO) as usize
+    }
+
+    fn size(&self) -> usize {
+        self.closure_heap.size()
+            + self.class_heap.size()
+            + self.instance_heap.size()
+            + self.bound_method_heap.size()
+    }
+
+    // TODO: I'm not super fond of this. I think object heap might need
+    // to merge back into the VM.
+    // I'd like the GC to only be considered when there's new allocations.
+    fn should_gc(&self) -> bool {
+        self.size() > self.next_gc_threshold
     }
 }
 
@@ -275,14 +292,7 @@ impl<W: std::io::Write> VM<W> {
     }
 
     fn run(&mut self) -> RuntimeResult<()> {
-        let mut gc_counter = 0;
         loop {
-            if gc_counter == GC_PERIOD {
-                self.collect_garbage();
-                gc_counter = 0;
-            }
-            gc_counter += 1;
-
             #[cfg(feature = "trace-execution")]
             {
                 let frame = self.frame_mut();
@@ -298,6 +308,10 @@ impl<W: std::io::Write> VM<W> {
                 );
                 self.frame_mut().chunk.disassemble_at(ip);
                 println!();
+            }
+
+            if self.object_heap.should_gc() {
+                self.collect_garbage();
             }
 
             match self.try_read_next_op()? {
