@@ -9,8 +9,7 @@ use super::gc::{Gc, HasSubHeap, Heap, Manages, SubHeap};
 use super::native;
 use super::native::NativeFunction;
 use super::value::{
-    LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,
-    Value,
+    LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, Upvalue, Value,
 };
 
 const GC_HEAP_RATIO: f64 = 2.0;
@@ -21,7 +20,7 @@ struct CallFrame {
     base_ptr: usize,
     name: InternedString,
     chunk: Rc<Chunk>,
-    upvalues: Rc<[UpvalueRef]>,
+    upvalues: Rc<[Gc<Upvalue>]>,
 }
 
 // like a vector but guarded by RuntimeResults everywhere
@@ -35,6 +34,7 @@ pub struct ObjectHeap {
     class_heap: SubHeap<LoxClass>,
     instance_heap: SubHeap<LoxInstance>,
     bound_method_heap: SubHeap<LoxBoundMethod>,
+    upvalue_heap: SubHeap<Upvalue>,
     next_gc_threshold: usize,
 }
 
@@ -42,7 +42,7 @@ pub struct VM<W> {
     // Invocation data
     stack: SafeStack<Value>,
     call_stack: Vec<CallFrame>,
-    open_upvalues: Vec<UpvalueRef>,
+    open_upvalues: Vec<Gc<Upvalue>>,
 
     // Persistent data
     string_table: StringInterner,
@@ -160,6 +160,7 @@ impl ObjectHeap {
             class_heap: SubHeap::new(),
             instance_heap: SubHeap::new(),
             bound_method_heap: SubHeap::new(),
+            upvalue_heap: SubHeap::new(),
             next_gc_threshold: 1024 * 1024, // arbitrary!
         }
     }
@@ -169,6 +170,7 @@ impl ObjectHeap {
             + self.class_heap.size()
             + self.instance_heap.size()
             + self.bound_method_heap.size()
+            + self.upvalue_heap.size()
     }
 
     // TODO: I'm not super fond of this. I think object heap might need
@@ -188,12 +190,6 @@ impl ObjectHeap {
             Value::Instance(ptr) => self.mark(*ptr),
             Value::BoundMethod(ptr) => self.mark(*ptr),
         }
-    }
-
-    fn mark_upvalue(&self, upvalue: &UpvalueRef) {
-        // If it's a closed upvalue, we access the value it holds, and mark it. Otherwise,
-        // we do nothing, since it's on the stack and will be marked.
-        upvalue.with_closed_value(|value| self.mark_value(value));
     }
 
     fn lookup_property(
@@ -243,6 +239,7 @@ impl Heap for ObjectHeap {
         self.class_heap.sweep();
         self.instance_heap.sweep();
         self.bound_method_heap.sweep();
+        self.upvalue_heap.sweep();
         self.next_gc_threshold = (self.size() as f64 * GC_HEAP_RATIO) as usize
     }
 }
@@ -259,7 +256,7 @@ impl HasSubHeap<LoxClosure> for ObjectHeap {
     fn trace(&self, content: &LoxClosure) {
         // A closed upvalue owns an object, so we have to mark our upvalues
         for upvalue in content.upvalues.iter() {
-            self.mark_upvalue(upvalue);
+            self.mark(*upvalue);
         }
     }
 }
@@ -311,6 +308,23 @@ impl HasSubHeap<LoxBoundMethod> for ObjectHeap {
     fn trace(&self, content: &LoxBoundMethod) {
         self.mark(content.receiver);
         self.mark(content.closure);
+    }
+}
+
+impl HasSubHeap<Upvalue> for ObjectHeap {
+    fn get_subheap(&self) -> &SubHeap<Upvalue> {
+        &self.upvalue_heap
+    }
+
+    fn get_subheap_mut(&mut self) -> &mut SubHeap<Upvalue> {
+        &mut self.upvalue_heap
+    }
+
+    fn trace(&self, content: &Upvalue) {
+        match content {
+            Upvalue::Open(_) => {}
+            Upvalue::Closed(value) => self.mark_value(value),
+        }
     }
 }
 
@@ -539,9 +553,9 @@ impl<W: std::io::Write> VM<W> {
                 }
                 RichOpcode::GetUpvalue(idx) => {
                     let idx = usize::from(idx);
-                    let value = match &*self.frame().upvalues[idx].borrow() {
-                        UpvalueData::Open(idx) => self.stack.get(*idx)?.clone(),
-                        UpvalueData::Closed(v) => v.clone(),
+                    let value = match self.object_heap.get(self.frame().upvalues[idx]) {
+                        Upvalue::Open(idx) => self.stack.get(*idx)?.clone(),
+                        Upvalue::Closed(v) => v.clone(),
                     };
 
                     self.stack.push(value);
@@ -550,10 +564,9 @@ impl<W: std::io::Write> VM<W> {
                     let idx = usize::from(idx);
                     let value = self.stack.peek(0)?.clone();
 
-                    let mut upvalue = self.frame().upvalues[idx].clone();
-                    match &mut *upvalue.borrow_mut() {
-                        UpvalueData::Open(idx) => self.stack.set(*idx, value)?,
-                        UpvalueData::Closed(slot) => *slot = value,
+                    match self.object_heap.get_mut(self.frame().upvalues[idx]) {
+                        Upvalue::Open(idx) => self.stack.set(*idx, value)?,
+                        Upvalue::Closed(slot) => *slot = value,
                     };
                 }
                 RichOpcode::CloseUpvalue => {
@@ -763,7 +776,7 @@ impl<W: std::io::Write> VM<W> {
         arg_count: usize,
         name: InternedString,
         chunk: Rc<Chunk>,
-        upvalues: Rc<[UpvalueRef]>,
+        upvalues: Rc<[Gc<Upvalue>]>,
     ) -> RuntimeResult<()> {
         if self.call_stack.len() == MAX_FRAMES {
             return Err(RuntimeError::StackOverflow);
@@ -906,31 +919,31 @@ impl<W: std::io::Write> VM<W> {
         Ok(())
     }
 
-    fn make_open_upvalue(&mut self, stack_idx: usize) -> UpvalueRef {
+    fn make_open_upvalue(&mut self, stack_idx: usize) -> Gc<Upvalue> {
         // Returns an upvalue pointing to the given stack slot.
 
-        // Because UpvalueData between siblings need to be shared, we first
-        // search for an existing open UpvalueRef, and return that if possible.
+        // Because Upvalues between siblings need to be shared, we first
+        // search for an existing open Gc<Upvalue>, and return that if possible.
         // (Parent and child also need to share upvalues, but because the child
-        // simply clones the UpvalueRef from the parent's array, we get sharing for
+        // simply clones the Gc<Upvalue> from the parent's array, we get sharing for
         // free).
-        fn index_match(upvalue: &UpvalueRef, stack_idx: usize) -> bool {
-            stack_idx
-                == upvalue
-                    .get_open_idx()
-                    .expect("open_upvalues contains closed upvalue!")
+        fn index_match(upvalue: &Upvalue, stack_idx: usize) -> bool {
+            match upvalue {
+                Upvalue::Open(idx) => stack_idx == *idx,
+                Upvalue::Closed(_) => panic!("open_upvalues contains closed upvalue!"),
+            }
         }
 
         match self
             .open_upvalues
             .iter()
-            .find(|u| index_match(u, stack_idx))
+            .find(|u| index_match(self.object_heap.get(**u), stack_idx))
         {
             // There's a pre-existing upvalue we should grab.
             Some(upvalue) => upvalue.clone(),
             // No matches; make a new one ourselves.
             None => {
-                let upvalue = UpvalueRef::new_open(stack_idx);
+                let upvalue = self.object_heap.manage(Upvalue::Open(stack_idx));
                 self.open_upvalues.push(upvalue.clone());
                 upvalue
             }
@@ -939,18 +952,23 @@ impl<W: std::io::Write> VM<W> {
 
     fn close_upvalues(&mut self, stack_idx: usize) -> RuntimeResult<()> {
         // Closes all upvalues corresponding to stack slots at or above the given index
-        for upvalue in self.open_upvalues.iter() {
-            let idx = upvalue
-                .get_open_idx()
-                .expect("open_upvalues contains closed upvalue!");
-            if idx >= stack_idx {
-                let value = self.stack.get(idx)?.clone();
-                upvalue.close_over_value(value);
+        for upvalue_ptr in self.open_upvalues.iter() {
+            let upvalue = self.object_heap.get_mut(*upvalue_ptr);
+            match upvalue {
+                Upvalue::Open(idx) => {
+                    if *idx >= stack_idx {
+                        let value = self.stack.get(*idx)?.clone();
+                        *upvalue = Upvalue::Closed(value);
+                    }
+                }
+                Upvalue::Closed(_) => panic!("open_upvalues contains closed upvalue!"),
             }
         }
 
         // Remove all closed upvalues
-        self.open_upvalues.retain(|u| u.get_open_idx().is_some());
+        let obj_heap_ref = &self.object_heap;  // appease borrow checker
+        self.open_upvalues
+            .retain(|u| matches!(obj_heap_ref.get(*u), Upvalue::Open(_)));
 
         Ok(())
     }
