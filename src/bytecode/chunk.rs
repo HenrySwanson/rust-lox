@@ -2,7 +2,6 @@ use std::convert::TryInto;
 use std::fmt;
 use std::rc::Rc;
 
-use super::errs::{CompilerError, CompilerResult};
 use super::opcode::{ConstantIdx, OpcodeError, RichOpcode, UpvalueAddr, MAX_CONSTANTS};
 use super::string_interning::InternedString;
 
@@ -107,13 +106,13 @@ impl Chunk {
         UpvalueAddr::decode(&self.code, offset)
     }
 
-    pub fn add_constant(&mut self, constant: ChunkConstant) -> CompilerResult<ConstantIdx> {
+    pub fn add_constant(&mut self, constant: ChunkConstant) -> Option<ConstantIdx> {
         let idx = self.constants.len();
         if idx < MAX_CONSTANTS {
             self.constants.push(constant);
-            Ok(idx.try_into().unwrap())
+            Some(idx.try_into().unwrap())
         } else {
-            Err(CompilerError::TooManyConstants)
+            None
         }
     }
 

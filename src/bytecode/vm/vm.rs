@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::chunk::{Chunk, ChunkConstant};
+use super::super::chunk::{Chunk, ChunkConstant};
+use super::super::opcode::{ConstantIdx, RichOpcode, UpvalueAddr};
+use super::super::string_interning::{InternedString, StringInterner};
 use super::errs::{RuntimeError, RuntimeResult};
 use super::gc::{Gc, HasSubHeap, Heap, Manages, SubHeap};
 use super::native;
 use super::native::NativeFunction;
-use super::opcode::{ConstantIdx, RichOpcode, UpvalueAddr};
-use super::string_interning::{InternedString, StringInterner};
 use super::value::{
     LoxBoundMethod, LoxClass, LoxClosure, LoxInstance, PropertyLookup, UpvalueData, UpvalueRef,
     Value,

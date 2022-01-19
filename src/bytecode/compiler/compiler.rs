@@ -3,12 +3,12 @@ use std::rc::Rc;
 
 use crate::frontend::{ast, Span};
 
-use super::chunk::{Chunk, ChunkConstant};
-use super::errs::{CompilerError, CompilerResult};
-use super::opcode::{
+use super::super::chunk::{Chunk, ChunkConstant};
+use super::super::opcode::{
     ConstantIdx, LocalIdx, RichOpcode, UpvalueAddr, UpvalueIdx, MAX_LOCALS, MAX_UPVALUES,
 };
-use super::string_interning::StringInterner;
+use super::super::string_interning::StringInterner;
+use super::errs::{CompilerError, CompilerResult};
 
 const THIS_STR: &str = "this";
 const SUPER_STR: &str = "super";
@@ -757,7 +757,9 @@ impl<'strtable> Compiler<'strtable> {
     }
 
     fn add_constant(&mut self, constant: ChunkConstant) -> CompilerResult<ConstantIdx> {
-        self.current_chunk().add_constant(constant)
+        self.current_chunk()
+            .add_constant(constant)
+            .ok_or(CompilerError::TooManyConstants)
     }
 
     fn add_string_constant(&mut self, string: &str) -> CompilerResult<ConstantIdx> {

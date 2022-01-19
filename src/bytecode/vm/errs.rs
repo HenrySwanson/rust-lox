@@ -1,21 +1,5 @@
-use super::chunk::ChunkConstant;
-use super::opcode::OpcodeError;
-
-#[derive(Debug)]
-pub enum CompilerError {
-    LocalAlreadyExists(String),
-    LocalUsedInOwnInitializer(String),
-    TooManyConstants,
-    TooManyLocals,
-    TooManyUpvalues,
-    JumpTooLong,
-    SelfInherit(String),
-    ThisOutsideClass,
-    SuperOutsideClass,
-    SuperWithoutSuperclass,
-    ReturnAtTopLevel,
-    ReturnInInitializer,
-}
+use super::super::chunk::ChunkConstant;
+use super::super::opcode::OpcodeError;
 
 // TODO how can i get the failed instruction in here?
 #[derive(Debug)]
@@ -45,7 +29,6 @@ pub enum RuntimeError {
     InstructionOutOfBounds,
 }
 
-pub type CompilerResult<T> = Result<T, CompilerError>;
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
 
 impl From<OpcodeError> for RuntimeError {

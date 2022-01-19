@@ -3,10 +3,10 @@ use std::collections::HashMap;
 
 use std::rc::Rc;
 
-use super::chunk::Chunk;
+use super::super::chunk::Chunk;
 use super::gc::Gc;
 use super::native::NativeFunction;
-use super::string_interning::InternedString;
+use super::super::string_interning::InternedString;
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
