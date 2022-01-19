@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use super::chunk::{Chunk, ChunkConstant};
 use super::errs::{RuntimeError, RuntimeResult};
-use super::gc::{GcHeap, GcPtr};
+use super::gc::{Gc, HasSubHeap, Heap, Manages, SubHeap};
 use super::native;
 use super::native::NativeFunction;
 use super::opcode::{ConstantIdx, RichOpcode, UpvalueAddr};
@@ -30,11 +30,11 @@ struct SafeStack<T> {
     stack: Vec<T>,
 }
 
-struct ObjectHeap {
-    closure_heap: GcHeap<LoxClosure>,
-    class_heap: GcHeap<LoxClass>,
-    instance_heap: GcHeap<LoxInstance>,
-    bound_method_heap: GcHeap<LoxBoundMethod>,
+pub struct ObjectHeap {
+    closure_heap: SubHeap<LoxClosure>,
+    class_heap: SubHeap<LoxClass>,
+    instance_heap: SubHeap<LoxInstance>,
+    bound_method_heap: SubHeap<LoxBoundMethod>,
     next_gc_threshold: usize,
 }
 
@@ -54,21 +54,21 @@ pub struct VM<W> {
 }
 
 impl Value {
-    fn class(&self) -> Option<GcPtr<LoxClass>> {
+    fn class(&self) -> Option<Gc<LoxClass>> {
         match self {
             Value::Class(ptr) => Some(ptr.clone()),
             _ => None,
         }
     }
 
-    fn instance(&self) -> Option<GcPtr<LoxInstance>> {
+    fn instance(&self) -> Option<Gc<LoxInstance>> {
         match self {
             Value::Instance(ptr) => Some(ptr.clone()),
             _ => None,
         }
     }
 
-    fn closure(&self) -> Option<GcPtr<LoxClosure>> {
+    fn closure(&self) -> Option<Gc<LoxClosure>> {
         match self {
             Value::Closure(ptr) => Some(ptr.clone()),
             _ => None,
@@ -156,67 +156,12 @@ impl<T> SafeStack<T> {
 impl ObjectHeap {
     fn new() -> Self {
         ObjectHeap {
-            closure_heap: GcHeap::new(),
-            class_heap: GcHeap::new(),
-            instance_heap: GcHeap::new(),
-            bound_method_heap: GcHeap::new(),
-            next_gc_threshold: 1024 * 1024,  // arbitrary!
+            closure_heap: SubHeap::new(),
+            class_heap: SubHeap::new(),
+            instance_heap: SubHeap::new(),
+            bound_method_heap: SubHeap::new(),
+            next_gc_threshold: 1024 * 1024, // arbitrary!
         }
-    }
-
-    fn insert_new_closure(
-        &mut self,
-        name: InternedString,
-        arity: usize,
-        chunk: Rc<Chunk>,
-        upvalues: Rc<[UpvalueRef]>,
-    ) -> Value {
-        let closure_obj = LoxClosure {
-            name,
-            arity,
-            chunk,
-            upvalues,
-        };
-        let closure_ptr = self.closure_heap.insert(closure_obj);
-        Value::Closure(closure_ptr)
-    }
-
-    fn insert_new_class(
-        &mut self,
-        name: InternedString,
-        methods: HashMap<InternedString, GcPtr<LoxClosure>>,
-    ) -> Value {
-        let class_obj = LoxClass { name, methods };
-        let class_ptr = self.class_heap.insert(class_obj);
-        Value::Class(class_ptr)
-    }
-
-    fn insert_new_instance(
-        &mut self,
-        class: GcPtr<LoxClass>,
-        fields: HashMap<InternedString, Value>,
-    ) -> Value {
-        let instance_obj = LoxInstance { class, fields };
-        let instance_ptr = self.instance_heap.insert(instance_obj);
-        Value::Instance(instance_ptr)
-    }
-
-    fn insert_new_bound_method(
-        &mut self,
-        receiver: GcPtr<LoxInstance>,
-        closure: GcPtr<LoxClosure>,
-    ) -> Value {
-        let bound_method_obj = LoxBoundMethod { receiver, closure };
-        let bound_method_ptr = self.bound_method_heap.insert(bound_method_obj);
-        Value::BoundMethod(bound_method_ptr)
-    }
-
-    fn sweep_all(&mut self) {
-        self.closure_heap.sweep();
-        self.class_heap.sweep();
-        self.instance_heap.sweep();
-        self.bound_method_heap.sweep();
-        self.next_gc_threshold = (self.size() as f64 * GC_HEAP_RATIO) as usize
     }
 
     fn size(&self) -> usize {
@@ -231,6 +176,141 @@ impl ObjectHeap {
     // I'd like the GC to only be considered when there's new allocations.
     fn should_gc(&self) -> bool {
         self.size() > self.next_gc_threshold
+    }
+
+    // -- some convenience methods that need heap access --
+    fn mark_value(&self, value: &Value) {
+        match value {
+            Value::Number(_) | Value::Boolean(_) | Value::Nil | Value::String(_) => {}
+            Value::Closure(ptr) => self.mark(*ptr),
+            Value::NativeFunction(_) => {}
+            Value::Class(ptr) => self.mark(*ptr),
+            Value::Instance(ptr) => self.mark(*ptr),
+            Value::BoundMethod(ptr) => self.mark(*ptr),
+        }
+    }
+
+    fn mark_upvalue(&self, upvalue: &UpvalueRef) {
+        // If it's a closed upvalue, we access the value it holds, and mark it. Otherwise,
+        // we do nothing, since it's on the stack and will be marked.
+        upvalue.with_closed_value(|value| self.mark_value(value));
+    }
+
+    fn lookup_property(
+        &self,
+        instance_ptr: Gc<LoxInstance>,
+        name: &InternedString,
+    ) -> PropertyLookup {
+        let instance = self.get(instance_ptr);
+
+        // Look up fields first, then methods
+        if let Some(value) = instance.fields.get(name) {
+            return PropertyLookup::Field(value.clone());
+        }
+
+        if let Some(method_ptr) = self.get(instance.class).methods.get(name) {
+            return PropertyLookup::Method(method_ptr.clone());
+        }
+
+        PropertyLookup::NotFound
+    }
+
+    pub fn value_string(&self, value: &Value) -> String {
+        match value {
+            Value::Number(n) => n.to_string(),
+            Value::Boolean(true) => String::from("true"),
+            Value::Boolean(false) => String::from("false"),
+            Value::Nil => String::from("nil"),
+            Value::String(s) => String::from(s.as_ref()),
+            Value::Closure(closure) => format!("<fn {}>", self.get(*closure).name),
+            Value::NativeFunction(_) => String::from("<native fn>"),
+            Value::Class(class) => format!("{}", self.get(*class).name),
+            Value::Instance(instance) => {
+                let instance = self.get(*instance);
+                format!("{} instance", self.get(instance.class).name)
+            }
+            Value::BoundMethod(method) => {
+                let method = self.get(*method);
+                format!("<fn {}>", self.get(method.closure).name)
+            }
+        }
+    }
+}
+
+impl Heap for ObjectHeap {
+    fn sweep(&mut self) {
+        self.closure_heap.sweep();
+        self.class_heap.sweep();
+        self.instance_heap.sweep();
+        self.bound_method_heap.sweep();
+        self.next_gc_threshold = (self.size() as f64 * GC_HEAP_RATIO) as usize
+    }
+}
+
+impl HasSubHeap<LoxClosure> for ObjectHeap {
+    fn get_subheap(&self) -> &SubHeap<LoxClosure> {
+        &self.closure_heap
+    }
+
+    fn get_subheap_mut(&mut self) -> &mut SubHeap<LoxClosure> {
+        &mut self.closure_heap
+    }
+
+    fn trace(&self, content: &LoxClosure) {
+        // A closed upvalue owns an object, so we have to mark our upvalues
+        for upvalue in content.upvalues.iter() {
+            self.mark_upvalue(upvalue);
+        }
+    }
+}
+
+impl HasSubHeap<LoxClass> for ObjectHeap {
+    fn get_subheap(&self) -> &SubHeap<LoxClass> {
+        &self.class_heap
+    }
+
+    fn get_subheap_mut(&mut self) -> &mut SubHeap<LoxClass> {
+        &mut self.class_heap
+    }
+
+    fn trace(&self, content: &LoxClass) {
+        // Mark our methods
+        for m in content.methods.values().copied() {
+            self.mark(m)
+        }
+    }
+}
+
+impl HasSubHeap<LoxInstance> for ObjectHeap {
+    fn get_subheap(&self) -> &SubHeap<LoxInstance> {
+        &self.instance_heap
+    }
+
+    fn get_subheap_mut(&mut self) -> &mut SubHeap<LoxInstance> {
+        &mut self.instance_heap
+    }
+
+    fn trace(&self, content: &LoxInstance) {
+        // Mark our class and our fields (methods are marked through the class)
+        self.mark(content.class);
+        for value in content.fields.values() {
+            self.mark_value(value);
+        }
+    }
+}
+
+impl HasSubHeap<LoxBoundMethod> for ObjectHeap {
+    fn get_subheap(&self) -> &SubHeap<LoxBoundMethod> {
+        &self.bound_method_heap
+    }
+
+    fn get_subheap_mut(&mut self) -> &mut SubHeap<LoxBoundMethod> {
+        &mut self.bound_method_heap
+    }
+
+    fn trace(&self, content: &LoxBoundMethod) {
+        self.mark(content.receiver);
+        self.mark(content.closure);
     }
 }
 
@@ -271,10 +351,13 @@ impl<W: std::io::Write> VM<W> {
 
         // Make a main() function and push it onto the stack
         let main_name = self.intern_string("<main>");
-        let main_fn =
-            self.object_heap
-                .insert_new_closure(main_name, 0, Rc::new(main_chunk), Rc::from([]));
-        self.stack.push(main_fn);
+        let main_fn = self.object_heap.manage(LoxClosure {
+            name: main_name,
+            arity: 0,
+            chunk: Rc::new(main_chunk),
+            upvalues: Rc::from([]),
+        });
+        self.stack.push(Value::Closure(main_fn));
 
         // Call main to start the program
         self.call(0)?;
@@ -446,13 +529,13 @@ impl<W: std::io::Write> VM<W> {
                         upvalues.push(upvalue_obj);
                     }
 
-                    let closure = self.object_heap.insert_new_closure(
+                    let closure = self.object_heap.manage(LoxClosure {
                         name,
                         arity,
-                        chunk.clone(),
-                        Rc::from(upvalues),
-                    );
-                    self.stack.push(closure);
+                        chunk: chunk.clone(),
+                        upvalues: Rc::from(upvalues),
+                    });
+                    self.stack.push(Value::Closure(closure));
                 }
                 RichOpcode::GetUpvalue(idx) => {
                     let idx = usize::from(idx);
@@ -480,8 +563,11 @@ impl<W: std::io::Write> VM<W> {
                 // Classes
                 RichOpcode::MakeClass(idx) => {
                     let name = self.fetch_string(idx);
-                    let class_value = self.object_heap.insert_new_class(name, HashMap::new());
-                    self.stack.push(class_value);
+                    let class_value = self.object_heap.manage(LoxClass {
+                        name,
+                        methods: HashMap::new(),
+                    });
+                    self.stack.push(Value::Class(class_value));
                 }
                 RichOpcode::GetProperty(idx) => {
                     let name = self.fetch_string(idx);
@@ -491,11 +577,15 @@ impl<W: std::io::Write> VM<W> {
                         .instance()
                         .ok_or(RuntimeError::BadPropertyAccess)?;
 
-                    let value = match instance_ptr.borrow().lookup(&name) {
+                    let value = match self.object_heap.lookup_property(instance_ptr, &name) {
                         PropertyLookup::Field(value) => value,
-                        PropertyLookup::Method(method) => self
-                            .object_heap
-                            .insert_new_bound_method(instance_ptr.clone(), method),
+                        PropertyLookup::Method(method) => {
+                            let bound_method = self.object_heap.manage(LoxBoundMethod {
+                                receiver: instance_ptr.clone(),
+                                closure: method,
+                            });
+                            Value::BoundMethod(bound_method)
+                        }
                         PropertyLookup::NotFound => {
                             return Err(RuntimeError::UndefinedProperty(name.to_string()))
                         }
@@ -508,13 +598,16 @@ impl<W: std::io::Write> VM<W> {
                 RichOpcode::SetProperty(idx) => {
                     let name = self.fetch_string(idx);
                     let value = self.stack.peek(0)?.clone();
-                    let mut instance_ptr = self
+                    let instance_ptr = self
                         .stack
                         .peek(1)?
                         .instance()
                         .ok_or(RuntimeError::BadFieldAccess)?;
 
-                    instance_ptr.borrow_mut().fields.insert(name, value.clone());
+                    self.object_heap
+                        .get_mut(instance_ptr)
+                        .fields
+                        .insert(name, value.clone());
 
                     // Remove the instance from the stack, but leave the value
                     self.stack.pop()?;
@@ -528,11 +621,10 @@ impl<W: std::io::Write> VM<W> {
                         .peek(0)?
                         .closure()
                         .ok_or(RuntimeError::NotAClosure)?;
-                    let mut class_ptr =
-                        self.stack.peek(1)?.class().ok_or(RuntimeError::NotAClass)?;
+                    let class_ptr = self.stack.peek(1)?.class().ok_or(RuntimeError::NotAClass)?;
 
-                    class_ptr
-                        .borrow_mut()
+                    self.object_heap
+                        .get_mut(class_ptr)
                         .methods
                         .insert(method_name, method_ptr.clone());
                     self.stack.pop()?; // pop just the method
@@ -549,7 +641,7 @@ impl<W: std::io::Write> VM<W> {
 
                     // Gotta check the fields still; must behave identically to a
                     // OP_GET_PROPERTY + OP_CALL
-                    match receiver_ptr.borrow().lookup(&method_name) {
+                    match self.object_heap.lookup_property(receiver_ptr, &method_name) {
                         PropertyLookup::Field(value) => {
                             self.stack.set_back(arg_count, value)?;
                             self.call(arg_count)?;
@@ -566,11 +658,10 @@ impl<W: std::io::Write> VM<W> {
                         .peek(1)?
                         .class()
                         .ok_or(RuntimeError::BadSuperclass)?;
-                    let mut class_ptr =
-                        self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
+                    let class_ptr = self.stack.peek(0)?.class().ok_or(RuntimeError::NotAClass)?;
 
-                    let methods = superclass_ptr.borrow().methods.clone();
-                    class_ptr.borrow_mut().methods = methods;
+                    let methods = self.object_heap.get(superclass_ptr).methods.clone();
+                    self.object_heap.get_mut(class_ptr).methods = methods;
                 }
                 RichOpcode::GetSuper(idx) => {
                     let method_name = self.fetch_string(idx);
@@ -581,21 +672,23 @@ impl<W: std::io::Write> VM<W> {
                         .instance()
                         .ok_or(RuntimeError::NotAnInstance)?;
 
-                    let method_ptr = match class_ptr.borrow().methods.get(&method_name) {
+                    let method_ptr = match self.object_heap.get(class_ptr).methods.get(&method_name)
+                    {
                         Some(method_ptr) => method_ptr.clone(),
                         None => {
                             return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
                         }
                     };
 
-                    let value = self
-                        .object_heap
-                        .insert_new_bound_method(instance_ptr.clone(), method_ptr);
+                    let bound_method = self.object_heap.manage(LoxBoundMethod {
+                        receiver: instance_ptr.clone(),
+                        closure: method_ptr,
+                    });
 
                     // Remove the two operands and push the result
                     self.stack.pop()?;
                     self.stack.pop()?;
-                    self.stack.push(value);
+                    self.stack.push(Value::BoundMethod(bound_method));
                 }
                 RichOpcode::SuperInvoke(idx, argc) => {
                     let method_name = self.fetch_string(idx);
@@ -607,8 +700,14 @@ impl<W: std::io::Write> VM<W> {
 
                     // No need to check the fields, this must be a method. The stack is
                     // already set up exactly how we want it.
-                    match superclass_ptr.borrow().methods.get(&method_name) {
-                        Some(method) => self.call_closure(method.clone(), arg_count)?,
+                    match self
+                        .object_heap
+                        .get(superclass_ptr)
+                        .methods
+                        .get(&method_name)
+                        .cloned()
+                    {
+                        Some(method) => self.call_closure(method, arg_count)?,
                         None => {
                             return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
                         }
@@ -632,7 +731,8 @@ impl<W: std::io::Write> VM<W> {
                 }
                 RichOpcode::Print => {
                     let value = self.stack.pop()?;
-                    writeln!(&mut self.output_sink, "{}", value)
+                    let output = self.object_heap.value_string(&value);
+                    writeln!(&mut self.output_sink, "{}", output)
                         .expect("Unable to write to output");
                 }
                 RichOpcode::Pop => {
@@ -755,18 +855,19 @@ impl<W: std::io::Write> VM<W> {
             }
             Value::Class(class_ptr) => {
                 // Create a "blank" instance
-                let instance = self
-                    .object_heap
-                    .insert_new_instance(class_ptr.clone(), HashMap::new());
+                let instance = self.object_heap.manage(LoxInstance {
+                    class: class_ptr.clone(),
+                    fields: HashMap::new(),
+                });
 
                 // Inject it on the stack, underneath the arguments (where the class was).
-                self.stack.set_back(arg_count, instance)?;
+                self.stack.set_back(arg_count, Value::Instance(instance))?;
 
                 // Then call the initializer, if it exists. The arguments will still be there,
                 // and despite the initializer being a bound method in spirit, calling it as
                 // a closure will work, since `this` is already in slot #0.
-                if let Some(init) = class_ptr.borrow().methods.get("init") {
-                    self.call_closure(init.clone(), arg_count)?
+                if let Some(init) = self.object_heap.get(class_ptr).methods.get("init").cloned() {
+                    self.call_closure(init, arg_count)?
                 } else if arg_count > 0 {
                     return Err(RuntimeError::WrongArity(0, arg_count));
                 };
@@ -775,37 +876,32 @@ impl<W: std::io::Write> VM<W> {
                 Ok(())
             }
             Value::BoundMethod(ptr) => {
-                let bound_method = ptr.borrow();
-                let receiver = Value::Instance(bound_method.receiver.clone());
+                let bound_method = self.object_heap.get(ptr);
+                let receiver = Value::Instance(bound_method.receiver);
+                let closure = bound_method.closure;
 
                 // Inject the receiver at slot #0 in the frame (where the bound
                 // method was)
                 self.stack.set_back(arg_count, receiver)?;
-                self.call_closure(bound_method.closure.clone(), arg_count)
+                self.call_closure(closure, arg_count)
             }
             _ => Err(RuntimeError::NotACallable),
         }
     }
 
     // Nice to re-use this method
-    fn call_closure(
-        &mut self,
-        closure_ptr: GcPtr<LoxClosure>,
-        arg_count: usize,
-    ) -> RuntimeResult<()> {
-        let closure = closure_ptr.borrow();
+    fn call_closure(&mut self, closure_ptr: Gc<LoxClosure>, arg_count: usize) -> RuntimeResult<()> {
+        let closure = self.object_heap.get(closure_ptr);
 
         // Check that the arity matches, and push the new frame
         if closure.arity != arg_count {
             return Err(RuntimeError::WrongArity(closure.arity, arg_count));
         }
 
-        self.push_new_frame(
-            arg_count,
-            closure.name.clone(),
-            closure.chunk.clone(),
-            closure.upvalues.clone(),
-        )?;
+        let name = closure.name.clone();
+        let chunk = closure.chunk.clone();
+        let upvalues = closure.upvalues.clone();
+        self.push_new_frame(arg_count, name, chunk, upvalues)?;
 
         Ok(())
     }
@@ -864,12 +960,12 @@ impl<W: std::io::Write> VM<W> {
     fn collect_garbage(&mut self) {
         // Everything on the stack is reachable
         for value in self.stack.iter() {
-            value.mark_internals();
+            self.object_heap.mark_value(value);
         }
 
         // All globals are also reachable
         for value in self.globals.values() {
-            value.mark_internals();
+            self.object_heap.mark_value(value);
         }
 
         // Call frames contain reachable objects, but they should only contain
@@ -879,7 +975,7 @@ impl<W: std::io::Write> VM<W> {
 
         // Objects might point to strings, so let's kill the objects first, to
         // claim more strings.
-        self.object_heap.sweep_all();
+        self.object_heap.sweep();
         self.string_table.clean();
     }
 

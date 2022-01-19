@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt;
+
 use std::rc::Rc;
 
 use super::chunk::Chunk;
-use super::gc::{GcPtr, Traceable};
+use super::gc::Gc;
 use super::native::NativeFunction;
 use super::string_interning::InternedString;
 
@@ -14,11 +14,11 @@ pub enum Value {
     Boolean(bool),
     Nil,
     String(InternedString),
-    Closure(GcPtr<LoxClosure>),
+    Closure(Gc<LoxClosure>),
     NativeFunction(NativeFunction), // no GC in here
-    Class(GcPtr<LoxClass>),
-    Instance(GcPtr<LoxInstance>),
-    BoundMethod(GcPtr<LoxBoundMethod>),
+    Class(Gc<LoxClass>),
+    Instance(Gc<LoxInstance>),
+    BoundMethod(Gc<LoxBoundMethod>),
 }
 
 pub struct LoxClosure {
@@ -30,17 +30,17 @@ pub struct LoxClosure {
 
 pub struct LoxClass {
     pub name: InternedString,
-    pub methods: HashMap<InternedString, GcPtr<LoxClosure>>,
+    pub methods: HashMap<InternedString, Gc<LoxClosure>>,
 }
 
 pub struct LoxInstance {
-    pub class: GcPtr<LoxClass>,
+    pub class: Gc<LoxClass>,
     pub fields: HashMap<InternedString, Value>,
 }
 
 pub struct LoxBoundMethod {
-    pub receiver: GcPtr<LoxInstance>,
-    pub closure: GcPtr<LoxClosure>,
+    pub receiver: Gc<LoxInstance>,
+    pub closure: Gc<LoxClosure>,
 }
 
 // change names around
@@ -60,130 +60,13 @@ pub enum UpvalueData {
 
 pub enum PropertyLookup {
     Field(Value),
-    Method(GcPtr<LoxClosure>),
+    Method(Gc<LoxClosure>),
     NotFound,
 }
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Boolean(false))
-    }
-
-    // TODO rename
-    pub fn mark_internals(&self) {
-        match self {
-            Value::Number(_) | Value::Boolean(_) | Value::Nil | Value::String(_) => {}
-            Value::Closure(ptr) => ptr.mark(),
-            Value::NativeFunction(_) => {}
-            Value::Class(ptr) => ptr.mark(),
-            Value::Instance(ptr) => ptr.mark(),
-            Value::BoundMethod(ptr) => ptr.mark(),
-        }
-    }
-}
-
-impl fmt::Debug for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        macro_rules! fmt_or_garbage {
-            ($handle:expr, $f:expr) => {
-                match &*$handle.try_borrow() {
-                    Some(obj) => obj.fmt($f),
-                    None => write!($f, "<garbage>"),
-                }
-            };
-        }
-
-        match self {
-            Value::Number(n) => n.fmt(f),
-            Value::Boolean(b) => b.fmt(f),
-            Value::Nil => write!(f, "nil"),
-            Value::String(s) => s.fmt(f),
-            Value::Closure(ptr) => fmt_or_garbage!(ptr, f),
-            Value::NativeFunction(func) => func.fmt(f),
-            Value::Class(ptr) => fmt_or_garbage!(ptr, f),
-            Value::Instance(ptr) => fmt_or_garbage!(ptr, f),
-            Value::BoundMethod(ptr) => fmt_or_garbage!(ptr, f),
-        }
-    }
-}
-
-impl fmt::Debug for LoxClosure {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<fn {}>", self.name)
-    }
-}
-
-impl fmt::Debug for NativeFunction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<native fn {}>", self.data.name)
-    }
-}
-
-impl fmt::Debug for LoxClass {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
-impl fmt::Debug for LoxInstance {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "instance of {:?}", self.class.borrow())
-    }
-}
-
-impl fmt::Debug for LoxBoundMethod {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.closure.borrow().fmt(f)
-    }
-}
-
-impl Traceable for LoxClosure {
-    fn trace(&self) {
-        // A closed upvalue owns an object, so we have to mark our upvalues
-        for u in self.upvalues.iter() {
-            u.mark_internals();
-        }
-    }
-}
-
-impl Traceable for LoxClass {
-    fn trace(&self) {
-        // Mark our methods
-        for m in self.methods.values() {
-            m.mark();
-        }
-    }
-}
-
-impl Traceable for LoxInstance {
-    fn trace(&self) {
-        // Mark our class and our fields (methods are marked through the class)
-        self.class.mark();
-        for f in self.fields.values() {
-            f.mark_internals();
-        }
-    }
-}
-
-impl Traceable for LoxBoundMethod {
-    fn trace(&self) {
-        self.receiver.mark();
-        self.closure.mark();
-    }
-}
-
-impl LoxInstance {
-    pub fn lookup(&self, name: &InternedString) -> PropertyLookup {
-        // Look up fields first, then methods
-        if let Some(value) = self.fields.get(name) {
-            return PropertyLookup::Field(value.clone());
-        }
-
-        if let Some(method_ptr) = self.class.borrow().methods.get(name) {
-            return PropertyLookup::Method(method_ptr.clone());
-        }
-
-        PropertyLookup::NotFound
     }
 }
 
@@ -216,31 +99,13 @@ impl UpvalueRef {
         }
     }
 
-    pub fn mark_internals(&self) {
+    pub fn with_closed_value<F, T>(&self, function: F) -> Option<T>
+    where
+        F: Fn(&Value) -> T,
+    {
         match &*self.data.borrow() {
-            UpvalueData::Open(_) => {} // nothing to do; the stack will mark it
-            UpvalueData::Closed(value) => value.mark_internals(),
-        }
-    }
-}
-
-impl std::fmt::Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Number(n) => write!(f, "{}", n),
-            Value::Boolean(true) => write!(f, "true"),
-            Value::Boolean(false) => write!(f, "false"),
-            Value::Nil => write!(f, "nil"),
-            Value::String(s) => write!(f, "{}", s),
-            Value::Closure(closure) => write!(f, "<fn {}>", closure.borrow().name),
-            Value::NativeFunction(_) => write!(f, "<native fn>"),
-            Value::Class(class) => write!(f, "{}", class.borrow().name),
-            Value::Instance(instance) => {
-                write!(f, "{} instance", instance.borrow().class.borrow().name)
-            }
-            Value::BoundMethod(method) => {
-                write!(f, "<fn {}>", method.borrow().closure.borrow().name)
-            }
+            UpvalueData::Open(_) => None,
+            UpvalueData::Closed(value) => Some(function(value)),
         }
     }
 }
