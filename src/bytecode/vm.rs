@@ -56,21 +56,21 @@ pub struct VM<W> {
 impl Value {
     fn class(&self) -> Option<Gc<LoxClass>> {
         match self {
-            Value::Class(ptr) => Some(ptr.clone()),
+            Value::Class(ptr) => Some(*ptr),
             _ => None,
         }
     }
 
     fn instance(&self) -> Option<Gc<LoxInstance>> {
         match self {
-            Value::Instance(ptr) => Some(ptr.clone()),
+            Value::Instance(ptr) => Some(*ptr),
             _ => None,
         }
     }
 
     fn closure(&self) -> Option<Gc<LoxClosure>> {
         match self {
-            Value::Closure(ptr) => Some(ptr.clone()),
+            Value::Closure(ptr) => Some(*ptr),
             _ => None,
         }
     }
@@ -209,7 +209,7 @@ impl ObjectHeap {
         }
 
         if let Some(method_ptr) = self.get(instance.class).methods.get(name) {
-            return PropertyLookup::Method(method_ptr.clone());
+            return PropertyLookup::Method(*method_ptr);
         }
 
         PropertyLookup::NotFound
@@ -581,7 +581,7 @@ impl<W: std::io::Write> VM<W> {
                         PropertyLookup::Field(value) => value,
                         PropertyLookup::Method(method) => {
                             let bound_method = self.object_heap.manage(LoxBoundMethod {
-                                receiver: instance_ptr.clone(),
+                                receiver: instance_ptr,
                                 closure: method,
                             });
                             Value::BoundMethod(bound_method)
@@ -626,7 +626,7 @@ impl<W: std::io::Write> VM<W> {
                     self.object_heap
                         .get_mut(class_ptr)
                         .methods
-                        .insert(method_name, method_ptr.clone());
+                        .insert(method_name, method_ptr);
                     self.stack.pop()?; // pop just the method
                 }
                 RichOpcode::Invoke(idx, argc) => {
@@ -674,14 +674,14 @@ impl<W: std::io::Write> VM<W> {
 
                     let method_ptr = match self.object_heap.get(class_ptr).methods.get(&method_name)
                     {
-                        Some(method_ptr) => method_ptr.clone(),
+                        Some(method_ptr) => *method_ptr,
                         None => {
                             return Err(RuntimeError::UndefinedProperty(method_name.to_string()))
                         }
                     };
 
                     let bound_method = self.object_heap.manage(LoxBoundMethod {
-                        receiver: instance_ptr.clone(),
+                        receiver: instance_ptr,
                         closure: method_ptr,
                     });
 
@@ -856,7 +856,7 @@ impl<W: std::io::Write> VM<W> {
             Value::Class(class_ptr) => {
                 // Create a "blank" instance
                 let instance = self.object_heap.manage(LoxInstance {
-                    class: class_ptr.clone(),
+                    class: class_ptr,
                     fields: HashMap::new(),
                 });
 

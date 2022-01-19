@@ -98,7 +98,7 @@ impl<T> SubHeap<T> {
 
     pub fn mark_and_trace<'a, F>(&'a self, ptr: Gc<T>, trace: F)
     where
-        F: Fn(&'a T) -> (),
+        F: Fn(&'a T),
     {
         // This is &self because we don't alter anything that isn't Cell.
         // More conceptually, we don't modify any of the structure of the heap.

@@ -337,7 +337,7 @@ impl Resolver {
         let fn_name = &fn_data.ident.name;
 
         // Define eagerly, so that the function can refer to itself recursively.
-        self.define(&fn_name);
+        self.define(fn_name);
 
         // Push a new scope, save the previous function context, and apply
         // the new one.

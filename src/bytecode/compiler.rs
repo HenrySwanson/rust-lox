@@ -185,7 +185,7 @@ impl<'strtable> Compiler<'strtable> {
                 self.compile_expression(expr)?;
 
                 self.declare_variable(&ident.name)?;
-                self.define_variable(&ident)?;
+                self.define_variable(ident)?;
             }
             ast::StmtKind::Block(stmts) => {
                 self.begin_scope();
@@ -236,7 +236,7 @@ impl<'strtable> Compiler<'strtable> {
                 // Store the name as a constant
                 let idx = self.add_string_constant(&ident.name)?;
                 self.emit_op(RichOpcode::MakeClass(idx), ident.span);
-                self.define_variable(&ident)?;
+                self.define_variable(ident)?;
 
                 // Push the class context onto the stack
                 self.class_stack.push(ClassContext {
@@ -256,11 +256,11 @@ impl<'strtable> Compiler<'strtable> {
                     self.declare_variable(&synthetic_super.name)?;
                     self.define_variable(&synthetic_super)?;
 
-                    self.get_variable(&superclass)?;
-                    self.get_variable(&ident)?;
+                    self.get_variable(superclass)?;
+                    self.get_variable(ident)?;
                     self.emit_op(RichOpcode::Inherit, superclass.span);
                 } else {
-                    self.get_variable(&ident)?;
+                    self.get_variable(ident)?;
                 }
 
                 // Deal with the methods
@@ -408,7 +408,7 @@ impl<'strtable> Compiler<'strtable> {
         for param in fn_decl.params.iter() {
             // Unlike normal local variables, we don't compile any expressions here
             self.declare_variable(&param.name)?;
-            self.define_variable(&param)?;
+            self.define_variable(param)?;
         }
 
         // Compile the function body, and add an implicit return
@@ -452,8 +452,8 @@ impl<'strtable> Compiler<'strtable> {
             ast::ExprKind::Literal(literal) => self.compile_literal(literal, expr.span)?,
             ast::ExprKind::BinOp(op, lhs, rhs) => self.compile_infix(*op, lhs, rhs, expr.span)?,
             ast::ExprKind::UnaryOp(op, subexpr) => self.compile_prefix(*op, subexpr, expr.span)?,
-            ast::ExprKind::Variable(var) => self.get_variable(&var)?,
-            ast::ExprKind::Assignment(var, subexpr) => self.set_variable(&var, subexpr)?,
+            ast::ExprKind::Variable(var) => self.get_variable(var)?,
+            ast::ExprKind::Assignment(var, subexpr) => self.set_variable(var, subexpr)?,
             ast::ExprKind::Logical(ast::LogicalOperator::And, lhs, rhs) => {
                 self.compile_and(lhs, rhs, expr.span)?
             }
