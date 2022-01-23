@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 more-asserts = "0.2.1"
 num_enum = "0.5.1"
+clap = { version = "3.0.0", features = ["derive"]}
 
 [dev-dependencies]
 test-generator = "*"
