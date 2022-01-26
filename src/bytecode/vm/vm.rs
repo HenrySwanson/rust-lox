@@ -966,7 +966,7 @@ impl<W: std::io::Write> VM<W> {
         }
 
         // Remove all closed upvalues
-        let obj_heap_ref = &self.object_heap;  // appease borrow checker
+        let obj_heap_ref = &self.object_heap; // appease borrow checker
         self.open_upvalues
             .retain(|u| matches!(obj_heap_ref.get(*u), Upvalue::Open(_)));
 

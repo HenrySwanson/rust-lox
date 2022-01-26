@@ -8,14 +8,25 @@ pub struct Gc<T> {
 
 #[derive(Debug)]
 pub struct SubHeap<T> {
-    objects: Vec<Option<HeapEntry<T>>>,
-    free_list: Vec<usize>,
+    objects: Vec<HeapEntry<T>>,
+    next_tombstone: Option<usize>,
 }
 
 #[derive(Debug)]
-struct HeapEntry<T> {
+enum HeapEntry<T> {
+    Occupied(Alive<T>),
+    Vacant(Tombstone),
+}
+
+#[derive(Debug)]
+struct Alive<T> {
     content: T,
     marked: Cell<bool>,
+}
+
+#[derive(Debug)]
+struct Tombstone {
+    next: Option<usize>,
 }
 
 impl<T> Gc<T> {
@@ -45,16 +56,23 @@ impl<T> SubHeap<T> {
     pub fn new() -> Self {
         Self {
             objects: vec![],
-            free_list: vec![],
+            next_tombstone: None,
         }
     }
 
     pub fn manage(&mut self, value: T) -> Gc<T> {
-        let entry = Some(HeapEntry::new(value));
-        match self.free_list.pop() {
-            Some(index) => {
-                self.objects[index] = entry;
-                Gc::new(index)
+        let entry = HeapEntry::new_object(value);
+        match self.next_tombstone {
+            Some(free_index) => {
+                let slot = &mut self.objects[free_index];
+                match slot {
+                    HeapEntry::Occupied(_) => panic!("Double occupancy for slot {}", free_index),
+                    HeapEntry::Vacant(tombstone) => {
+                        self.next_tombstone = tombstone.next;
+                        *slot = entry;
+                        Gc::new(free_index)
+                    }
+                }
             }
             None => {
                 let index = self.objects.len();
@@ -64,27 +82,27 @@ impl<T> SubHeap<T> {
         }
     }
 
-    fn get_entry(&self, ptr: Gc<T>) -> &HeapEntry<T> {
+    fn get_entry(&self, ptr: Gc<T>) -> &Alive<T> {
         let length = self.objects.len();
         match self.objects.get(ptr.index) {
             None => panic!(
                 "gc pointed outside vector bounds: {} > {}",
                 ptr.index, length
             ),
-            Some(None) => panic!("gc pointed to freed object: {}", ptr.index),
-            Some(Some(x)) => x,
+            Some(HeapEntry::Vacant(_)) => panic!("gc pointed to freed object: {}", ptr.index),
+            Some(HeapEntry::Occupied(obj)) => obj,
         }
     }
 
-    fn get_entry_mut(&mut self, ptr: Gc<T>) -> &mut HeapEntry<T> {
+    fn get_entry_mut(&mut self, ptr: Gc<T>) -> &mut Alive<T> {
         let length = self.objects.len();
         match self.objects.get_mut(ptr.index) {
-            Some(Some(x)) => x,
-            Some(None) => panic!("gc pointed to freed object: {}", ptr.index),
             None => panic!(
                 "gc pointed outside vector bounds: {} > {}",
                 ptr.index, length
             ),
+            Some(HeapEntry::Vacant(_)) => panic!("gc pointed to freed object: {}", ptr.index),
+            Some(HeapEntry::Occupied(obj)) => obj,
         }
     }
 
@@ -113,14 +131,15 @@ impl<T> SubHeap<T> {
         // Let's get sweeping.
         for (index, slot) in self.objects.iter_mut().enumerate() {
             // Skim through our object list, skipping empty slots
-            if let Some(entry) = slot {
-                // If it's marked, we just unmark it. Otherwise, we delete it and add its
-                // index to the free list.
-                if entry.is_marked() {
-                    entry.unmark();
+            if let HeapEntry::Occupied(obj) = slot {
+                // If it's marked, we just unmark it.
+                if obj.is_marked() {
+                    obj.unmark();
                 } else {
-                    *slot = None;
-                    self.free_list.push(index);
+                    // Otherwise, we delete it, and change self.next_tombstone to point
+                    // to this slot.
+                    *slot = HeapEntry::new_tombstone(self.next_tombstone);
+                    self.next_tombstone = Some(index);
                 }
             }
         }
@@ -133,15 +152,19 @@ impl<T> SubHeap<T> {
 }
 
 impl<T> HeapEntry<T> {
-    fn new(content: T) -> Self {
-        Self {
-            content,
+    fn new_object(value: T) -> Self {
+        Self::Occupied(Alive {
+            content: value,
             marked: Cell::new(false),
-        }
+        })
+    }
+
+    fn new_tombstone(index: Option<usize>) -> Self {
+        Self::Vacant(Tombstone { next: index })
     }
 }
 
-impl<T> HeapEntry<T> {
+impl<T> Alive<T> {
     pub fn mark(&self) -> bool {
         self.marked.replace(true)
     }
@@ -202,14 +225,24 @@ mod tests {
     impl<T> SubHeap<T> {
         fn definitely_invalid(&self, ptr: Gc<T>) -> bool {
             match self.objects.get(ptr.index) {
-                Some(Some(_)) => false,
-                Some(None) => true,
+                Some(HeapEntry::Occupied(_)) => false,
+                Some(HeapEntry::Vacant(_)) => true,
                 None => true,
             }
         }
 
         fn number_alive(&self) -> usize {
-            self.objects.iter().filter(|x| x.is_some()).count()
+            self.objects
+                .iter()
+                .filter(|x| matches!(x, HeapEntry::Occupied(_)))
+                .count()
+        }
+
+        fn number_dead(&self) -> usize {
+            self.objects
+                .iter()
+                .filter(|x| matches!(x, HeapEntry::Vacant(_)))
+                .count()
         }
     }
 
@@ -254,7 +287,7 @@ mod tests {
         assert_eq!("A", *heap.get(ptr_a));
         assert_eq!("B", *heap.get(ptr_b));
         assert_eq!(heap.heap.number_alive(), 2);
-        assert_eq!(heap.heap.free_list.len(), 0);
+        assert_eq!(heap.heap.number_dead(), 0);
 
         heap.mark(ptr_a);
         heap.mark(ptr_b);
@@ -263,7 +296,7 @@ mod tests {
         assert_eq!("A", *heap.get(ptr_a));
         assert_eq!("B", *heap.get(ptr_b));
         assert_eq!(heap.heap.number_alive(), 2);
-        assert_eq!(heap.heap.free_list.len(), 0);
+        assert_eq!(heap.heap.number_dead(), 0);
 
         // don't mark a
         heap.mark(ptr_b);
@@ -272,7 +305,7 @@ mod tests {
         assert!(heap.heap.definitely_invalid(ptr_a));
         assert_eq!("B", *heap.get(ptr_b));
         assert_eq!(heap.heap.number_alive(), 1);
-        assert_eq!(heap.heap.free_list.len(), 1);
+        assert_eq!(heap.heap.number_dead(), 1);
 
         // mark nothing
         heap.sweep();
@@ -280,7 +313,7 @@ mod tests {
         assert!(heap.heap.definitely_invalid(ptr_a));
         assert!(heap.heap.definitely_invalid(ptr_b));
         assert_eq!(heap.heap.number_alive(), 0);
-        assert_eq!(heap.heap.free_list.len(), 2);
+        assert_eq!(heap.heap.number_dead(), 2);
     }
 
     // Simple struct for testing references
